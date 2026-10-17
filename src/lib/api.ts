@@ -6,7 +6,8 @@ import {
   AnalyticsSummary,
   CustomerCRM,
   Lead,
-  AdminNotification
+  AdminNotification,
+  EmailLog
 } from '../types';
 
 const DEFAULT_ADMIN_TOKEN = 'era_token_9f81a7b2c4e6';
@@ -30,17 +31,30 @@ const getAuthHeader = (): Record<string, string> => {
   };
 };
 
+async function fetchWithRetry(url: string, options?: RequestInit, retries = 2, delay = 300): Promise<Response> {
+  try {
+    const res = await fetch(url, options);
+    return res;
+  } catch (err) {
+    if (retries > 0) {
+      await new Promise((r) => setTimeout(r, delay));
+      return fetchWithRetry(url, options, retries - 1, delay * 1.5);
+    }
+    throw err;
+  }
+}
+
 export const api = {
   // Products
   async getProducts(params?: Record<string, string>): Promise<Product[]> {
     const query = new URLSearchParams(params).toString();
-    const res = await fetch(`/api/products${query ? `?${query}` : ''}`);
+    const res = await fetchWithRetry(`/api/products${query ? `?${query}` : ''}`, { cache: 'no-store' });
     if (!res.ok) throw new Error('Failed to fetch products');
     return res.json();
   },
 
   async getProduct(idOrSlug: string): Promise<Product> {
-    const res = await fetch(`/api/products/${idOrSlug}`);
+    const res = await fetchWithRetry(`/api/products/${encodeURIComponent(idOrSlug)}`, { cache: 'no-store' });
     if (!res.ok) throw new Error('Product not found');
     return res.json();
   },
@@ -191,13 +205,13 @@ export const api = {
   },
 
   async getOrder(id: string): Promise<Order> {
-    const res = await fetch(`/api/orders/${id}`);
+    const res = await fetchWithRetry(`/api/orders/${id}`);
     if (!res.ok) throw new Error('Order not found');
     return res.json();
   },
 
   async getOrderByToken(token: string): Promise<Order> {
-    const res = await fetch(`/api/orders/access/${token}`);
+    const res = await fetchWithRetry(`/api/orders/access/${encodeURIComponent(token)}`, { cache: 'no-store' });
     if (!res.ok) throw new Error('Invoice or order not found');
     return res.json();
   },
@@ -232,7 +246,8 @@ export const api = {
   },
 
   async getOrders(q?: string): Promise<Order[]> {
-    const res = await fetch(`/api/orders${q ? `?q=${encodeURIComponent(q)}` : ''}`, {
+    const res = await fetchWithRetry(`/api/orders${q ? `?q=${encodeURIComponent(q)}` : ''}`, {
+      cache: 'no-store',
       headers: { ...getAuthHeader() }
     });
     if (!res.ok) throw new Error('Failed to fetch orders');
@@ -254,7 +269,8 @@ export const api = {
 
   // Customers CRM
   async getCustomers(q?: string): Promise<CustomerCRM[]> {
-    const res = await fetch(`/api/customers${q ? `?q=${encodeURIComponent(q)}` : ''}`, {
+    const res = await fetchWithRetry(`/api/customers${q ? `?q=${encodeURIComponent(q)}` : ''}`, {
+      cache: 'no-store',
       headers: { ...getAuthHeader() }
     });
     if (!res.ok) throw new Error('Failed to fetch customers');
@@ -262,7 +278,8 @@ export const api = {
   },
 
   async getCustomer(id: string): Promise<{ customer: CustomerCRM; orders: Order[] }> {
-    const res = await fetch(`/api/customers/${id}`, {
+    const res = await fetchWithRetry(`/api/customers/${encodeURIComponent(id)}`, {
+      cache: 'no-store',
       headers: { ...getAuthHeader() }
     });
     if (!res.ok) throw new Error('Failed to fetch customer profile');
@@ -284,7 +301,8 @@ export const api = {
 
   // Leads & Inquiries
   async getLeads(q?: string): Promise<Lead[]> {
-    const res = await fetch(`/api/leads${q ? `?q=${encodeURIComponent(q)}` : ''}`, {
+    const res = await fetchWithRetry(`/api/leads${q ? `?q=${encodeURIComponent(q)}` : ''}`, {
+      cache: 'no-store',
       headers: { ...getAuthHeader() }
     });
     if (!res.ok) throw new Error('Failed to fetch leads');
@@ -319,7 +337,8 @@ export const api = {
 
   // Notifications
   async getNotifications(): Promise<AdminNotification[]> {
-    const res = await fetch('/api/notifications', {
+    const res = await fetchWithRetry('/api/notifications', {
+      cache: 'no-store',
       headers: { ...getAuthHeader() }
     });
     if (!res.ok) throw new Error('Failed to fetch notifications');
@@ -342,7 +361,7 @@ export const api = {
 
   // Settings
   async getSettings(): Promise<StoreSettings> {
-    const res = await fetch('/api/settings');
+    const res = await fetchWithRetry('/api/settings', { cache: 'no-store' });
     if (!res.ok) throw new Error('Failed to fetch settings');
     return res.json();
   },
@@ -360,12 +379,65 @@ export const api = {
     return res.json();
   },
 
+  async resetHomeConfig(): Promise<StoreSettings> {
+    const res = await fetch('/api/settings/home-config/reset', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader()
+      }
+    });
+    if (!res.ok) throw new Error('Failed to reset homepage layout');
+    return res.json();
+  },
+
+  async uploadImage(dataUrl: string, name?: string): Promise<string> {
+    try {
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeader()
+        },
+        body: JSON.stringify({ data: dataUrl, name })
+      });
+      if (res.ok) {
+        const body = await res.json();
+        if (body.url) return body.url;
+      }
+    } catch (e) {
+      console.warn('Backend image upload fallback to data URL:', e);
+    }
+    return dataUrl;
+  },
+
+  async uploadFromUrl(imageUrl: string, name?: string): Promise<string> {
+    const token = getAdminAuthToken();
+    try {
+      const res = await fetch(`/api/upload-from-url?admin_token=${token}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeader()
+        },
+        body: JSON.stringify({ url: imageUrl, name })
+      });
+      if (res.ok) {
+        const body = await res.json();
+        if (body.url) return body.url;
+      }
+    } catch (e) {
+      console.warn('Backend upload-from-url fallback:', e);
+    }
+    return imageUrl;
+  },
+
   // Reviews
   async getReviews(productId?: string, all = false): Promise<Review[]> {
     const q = new URLSearchParams();
     if (productId) q.set('productId', productId);
     if (all) q.set('all', 'true');
-    const res = await fetch(`/api/reviews?${q.toString()}`);
+    const res = await fetchWithRetry(`/api/reviews?${q.toString()}`, { cache: 'no-store' });
     if (!res.ok) throw new Error('Failed to fetch reviews');
     return res.json();
   },
@@ -406,7 +478,8 @@ export const api = {
 
   // Analytics
   async getAnalytics(): Promise<AnalyticsSummary> {
-    const res = await fetch('/api/analytics', {
+    const res = await fetchWithRetry('/api/analytics', {
+      cache: 'no-store',
       headers: { ...getAuthHeader() }
     });
     if (!res.ok) throw new Error('Failed to fetch analytics');
@@ -438,5 +511,31 @@ export const api = {
 
   logout() {
     localStorage.removeItem('era_admin_token');
+  },
+
+  // Email Notifications
+  async sendTestEmail(targetEmail?: string): Promise<{ success: boolean; message: string; log: EmailLog }> {
+    const res = await fetch('/api/settings/test-email', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader()
+      },
+      body: JSON.stringify({ targetEmail })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Failed to send test email');
+    }
+    return res.json();
+  },
+
+  async getEmailLogs(): Promise<EmailLog[]> {
+    const res = await fetchWithRetry('/api/email-logs', {
+      cache: 'no-store',
+      headers: { ...getAuthHeader() }
+    });
+    if (!res.ok) throw new Error('Failed to fetch email logs');
+    return res.json();
   }
 };

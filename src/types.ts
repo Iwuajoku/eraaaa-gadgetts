@@ -139,7 +139,7 @@ export interface Order {
   subtotal: number;
   deliveryFee: number;
   discount: number;
-  deliveryOption: 'lagos' | 'outside_lagos' | 'pickup';
+  deliveryOption: 'delivery' | 'lagos' | 'outside_lagos' | 'pickup';
   total: number;
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
@@ -209,16 +209,173 @@ export interface WhatsAppConfig {
   };
 }
 
+export interface HomeHeroConfig {
+  showHero: boolean;
+  badge: string;
+  headline: string;
+  subheadline: string;
+  primaryButtonText: string;
+  primaryButtonCategory: string;
+  secondaryButtonText: string;
+  secondaryButtonCategory: string;
+  heroImage: string;
+  heroImageAlt: string;
+  heroImageTag: string;
+  heroImageTitle: string;
+  heroButtonText: string;
+  heroProductSlug: string;
+}
+
+export interface HomeCategoryCard {
+  id: string;
+  name: string;
+  tagline: string;
+  image: string;
+  iconName: string;
+  enabled: boolean;
+}
+
+export interface HomeShowcase1Config {
+  showShowcase: boolean;
+  badge: string;
+  stockStatus: string;
+  productSlug: string;
+  titleOverride?: string;
+  descriptionOverride?: string;
+  imageOverride?: string;
+  buyButtonText: string;
+  detailsButtonText: string;
+}
+
+export interface HomeShowcase2Config {
+  showShowcase: boolean;
+  badge: string;
+  headline: string;
+  description: string;
+  image: string;
+  stat1Label: string;
+  stat1Value: string;
+  stat2Label: string;
+  stat2Value: string;
+  stat3Label: string;
+  stat3Value: string;
+  primaryButtonText: string;
+  primaryButtonSlug: string;
+  secondaryButtonText: string;
+  secondaryButtonCategory: string;
+}
+
+export interface HomeShowcase3Config {
+  showShowcase: boolean;
+  badge: string;
+  headline: string;
+  description: string;
+  image: string;
+  pricePrefix: string;
+  priceValue: string;
+  primaryButtonText: string;
+  primaryButtonSlug: string;
+  secondaryButtonText: string;
+  secondaryButtonCategory: string;
+}
+
+export interface HomeBestSellersConfig {
+  showSection: boolean;
+  title: string;
+  subtitle: string;
+  limit: number;
+}
+
+export interface HomeTrustPillar {
+  id: string;
+  icon: string;
+  title: string;
+  description: string;
+}
+
+export interface HomeTrustConfig {
+  showSection: boolean;
+  title: string;
+  subtitle: string;
+  pillars: HomeTrustPillar[];
+}
+
+export interface HomeFaqItem {
+  id: string;
+  q: string;
+  a: string;
+}
+
+export interface HomeFaqConfig {
+  showSection: boolean;
+  title: string;
+  subtitle: string;
+  items: HomeFaqItem[];
+}
+
+export interface HomeNewsletterConfig {
+  showSection: boolean;
+  headline: string;
+  subheadline: string;
+  buttonText: string;
+  placeholderText: string;
+}
+
+export interface HomePageConfig {
+  hero: HomeHeroConfig;
+  categoriesSection: {
+    showSection: boolean;
+    title: string;
+    subtitle: string;
+    categories: HomeCategoryCard[];
+  };
+  showcase1: HomeShowcase1Config;
+  showcase2: HomeShowcase2Config;
+  bestSellers: HomeBestSellersConfig;
+  showcase3: HomeShowcase3Config;
+  trust: HomeTrustConfig;
+  faq: HomeFaqConfig;
+  newsletter: HomeNewsletterConfig;
+}
+
+export interface EmailConfig {
+  orderNotificationEmail: string;
+  enabled: boolean;
+  fromName?: string;
+  fromEmail?: string;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpUser?: string;
+  smtpPass?: string;
+  smtpSecure?: boolean;
+}
+
+export interface EmailLog {
+  id: string;
+  orderId?: string;
+  orderNumber?: string;
+  recipient: string;
+  subject: string;
+  status: 'sent' | 'failed' | 'simulated';
+  error?: string;
+  previewText?: string;
+  sentAt: string;
+}
+
 export interface StoreSettings {
   brandName: string;
   tagline: string;
   phone: string;
   whatsappNumber: string;
   email: string;
+  orderNotificationEmail?: string;
+  adminNotificationEmails?: string[] | string;
+  emailConfig?: EmailConfig;
   address: string;
   openingHours: string;
   currency: string;
   currencySymbol: string;
+  deliveryFee: number;
   lagosDeliveryFee: number;
   outsideLagosDeliveryFee: number;
   pickupFee: number;
@@ -233,6 +390,7 @@ export interface StoreSettings {
   whatsappConfig: WhatsAppConfig;
   instagramUrl: string;
   twitterUrl: string;
+  homeConfig?: HomePageConfig;
 }
 
 export interface CustomerCRM {
@@ -271,10 +429,11 @@ export interface Lead {
 
 export interface AdminNotification {
   id: string;
-  type: 'order' | 'payment_awaiting' | 'payment_verified' | 'lead' | 'enquiry' | 'low_stock' | 'sold_out';
+  type: 'order' | 'payment_awaiting' | 'payment_verified' | 'lead' | 'enquiry' | 'low_stock' | 'sold_out' | 'system';
   title: string;
   message: string;
   orderId?: string;
+  link?: string;
   read: boolean;
   createdAt: string;
 }
@@ -297,3 +456,15 @@ export interface AnalyticsSummary {
   recentOrders: Order[];
   recentLeads: Lead[];
 }
+
+export interface PushSubscriptionRecord {
+  endpoint: string;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+  deviceType?: string;
+  userAgent?: string;
+  subscribedAt: string;
+}
+

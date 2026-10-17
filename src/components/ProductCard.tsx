@@ -40,7 +40,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const validImages = React.useMemo(() => {
     if (!product.images) return [];
     return product.images.filter(
-      (img) => Boolean(img && typeof img === 'string' && img.trim() && !img.startsWith('/src/assets/images/'))
+      (img) => Boolean(img && typeof img === 'string' && img.trim())
     );
   }, [product.images]);
 
@@ -123,6 +123,18 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
             <p className="text-xs text-neutral-500 truncate mt-0.5">
               {distinctStorages.join(' · ')}
             </p>
+          )}
+
+          {/* Pairing cue to inspire accessory upsells */}
+          {product.category !== 'Accessories' && (
+            <div className="pt-1 flex items-center gap-1.5 text-[10px] font-bold text-amber-800">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+              <span className="truncate">
+                {product.brand.toLowerCase().includes('apple')
+                  ? 'Frequently paired with 20W Fast Adapter'
+                  : 'Frequently paired with Anker Fast Power Bank'}
+              </span>
+            </div>
           )}
         </div>
 

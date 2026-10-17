@@ -1,0 +1,112 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Certified electronics product in the Era Gadgets catalog",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "slug": { "type": "string" },
+        "name": { "type": "string" },
+        "brand": { "type": "string" },
+        "category": { "type": "string" },
+        "condition": { "type": "string" },
+        "shortDescription": { "type": "string" },
+        "description": { "type": "string" },
+        "basePrice": { "type": "number" },
+        "compareAtPrice": { "type": "number" },
+        "badge": { "type": "string" },
+        "status": { "type": "string" },
+        "isSold": { "type": "boolean" },
+        "featured": { "type": "boolean" },
+        "images": { "type": "array" },
+        "variants": { "type": "array" },
+        "specs": { "type": "object" },
+        "inStock": { "type": "boolean" },
+        "stockCount": { "type": "number" },
+        "showroomLocation": { "type": "string" },
+        "rating": { "type": "number" },
+        "reviewsCount": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "basePrice", "category"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer purchase order for gadgets",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderNumber": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerEmail": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "customerWhatsApp": { "type": "string" },
+        "deliveryAddress": { "type": "string" },
+        "items": { "type": "array" },
+        "total": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "paymentStatus": { "type": "string" },
+        "orderStatus": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "orderNumber", "invoiceNumber", "customerName", "total"]
+    },
+    "StoreSettings": {
+      "title": "StoreSettings",
+      "description": "Global settings and configurations for Era Gadgets",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "storeName": { "type": "string" },
+        "tagline": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "address": { "type": "string" },
+        "whatsappNumber": { "type": "string" },
+        "homeConfig": { "type": "object" },
+        "paymentMethods": { "type": "object" },
+        "whatsappConfig": { "type": "object" },
+        "emailConfig": { "type": "object" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "storeName"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "Customer review and rating for a device",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "productId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "rating": { "type": "number" },
+        "comment": { "type": "string" },
+        "verified": { "type": "boolean" },
+        "date": { "type": "string" }
+      },
+      "required": ["id", "productId", "customerName", "rating"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Published and managed gadget inventory"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Customer purchase orders and invoices"
+    },
+    "/settings/{settingId}": {
+      "schema": "StoreSettings",
+      "description": "Store configuration document"
+    },
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Product reviews from customers"
+    }
+  }
+}

@@ -4,6 +4,18 @@ import { api } from '../lib/api';
 import { formatNaira, generateGeneralWhatsAppUrl } from '../lib/utils';
 import { InvoiceView } from '../components/InvoiceView';
 import { AdminProductForm } from '../components/AdminProductForm';
+import { AdminHomeEditor } from '../components/AdminHomeEditor';
+import {
+  playClassicNotificationSound,
+  vibrateDevice,
+  requestNotificationPermission,
+  showClassicNotification,
+  getNotificationPermission,
+  subscribeDeviceToPush,
+  startUniversalNotificationStream,
+  triggerUniversalTestBroadcast
+} from '../lib/notifications';
+import { ClassicNotificationBanner, ClassicNotificationItem } from '../components/ClassicNotificationBanner';
 import {
   Product,
   Order,
@@ -14,10 +26,12 @@ import {
   ColorOption,
   CustomerCRM,
   Lead,
-  AdminNotification
+  AdminNotification,
+  EmailLog
 } from '../types';
 import {
   LayoutDashboard,
+  LayoutTemplate,
   Package,
   PlusCircle,
   Boxes,
@@ -52,7 +66,13 @@ import {
   ExternalLink,
   MessageCircle,
   Send,
-  X
+  Mail,
+  Server,
+  Cloud,
+  Upload,
+  X,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 
 export const AdminDashboard: React.FC = () => {
@@ -60,9 +80,12 @@ export const AdminDashboard: React.FC = () => {
     products,
     refreshProducts,
     settings,
+    setSettings,
     refreshSettings,
     setCurrentView,
-    openProduct
+    openProduct,
+    adminActiveTab,
+    setAdminActiveTab
   } = useStore();
 
   const [activeTab, setActiveTab] = useState<
@@ -77,7 +100,14 @@ export const AdminDashboard: React.FC = () => {
     | 'whatsapp'
     | 'reviews'
     | 'settings'
-  >('overview');
+    | 'homepage'
+  >((adminActiveTab as any) || 'overview');
+
+  useEffect(() => {
+    if (adminActiveTab) {
+      setActiveTab(adminActiveTab as any);
+    }
+  }, [adminActiveTab]);
 
   // Auth State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -122,12 +152,95 @@ export const AdminDashboard: React.FC = () => {
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [adminFeedback, setAdminFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Email Notification States
+  const [testEmailLoading, setTestEmailLoading] = useState(false);
+  const [testEmailFeedback, setTestEmailFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [emailLogs, setEmailLogs] = useState<EmailLog[]>([]);
+  const [showAdvancedSmtp, setShowAdvancedSmtp] = useState(false);
+  const [showNotificationDropdown, setShowNotificationDropdown] = useState(false);
+  const [audioEnabled, setAudioEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('era_admin_audio_alerts') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const [pushEnabled, setPushEnabled] = useState<boolean>(() => {
+    return typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted';
+  });
+  const [showPermissionBanner, setShowPermissionBanner] = useState<boolean>(() => {
+    return typeof window !== 'undefined' && 'Notification' in window && Notification.permission !== 'granted';
+  });
+  const [topBannerNotification, setTopBannerNotification] = useState<ClassicNotificationItem | null>(null);
+  const [liveToast, setLiveToast] = useState<{
+    id: string;
+    title: string;
+    message: string;
+    type: string;
+    orderId?: string;
+  } | null>(null);
+
+  const knownNotificationIds = React.useRef<Set<string>>(new Set());
+
+  // Trigger test app notification with real-time universal cross-device broadcast
+  const handleTestAppNotification = React.useCallback(async () => {
+    if (audioEnabled) {
+      playClassicNotificationSound();
+    }
+    vibrateDevice();
+
+    setTopBannerNotification({
+      id: `test-${Date.now()}`,
+      title: '🛒 Universal Alert: New Order EG-2026-LIVE',
+      message: 'Chief Adeleke placed an order for iPhone 17 Pro Max (₦2,850,000). Broadcasting universally across all your devices!',
+      type: 'order'
+    });
+
+    const res = await triggerUniversalTestBroadcast();
+    setAdminFeedback({
+      type: 'success',
+      text: res.message || 'Universal notification broadcasted to all connected devices in real-time!'
+    });
+  }, [audioEnabled]);
+
+  // Request browser push notification permission & register device with backend
+  const handleRequestPushPermission = async () => {
+    const res = await subscribeDeviceToPush();
+    setPushEnabled(res.success);
+    if (res.success) {
+      setShowPermissionBanner(false);
+      setAdminFeedback({
+        type: 'success',
+        text: 'This device is now registered for universal background push notifications!'
+      });
+      showClassicNotification({
+        title: '🔔 Universal Real-Time Sync Active',
+        body: 'This phone/laptop is now connected! Orders will appear simultaneously across all your devices in real-time.',
+        url: '/admin'
+      });
+    } else if (res.error) {
+      setAdminFeedback({
+        type: 'error',
+        text: res.error
+      });
+    }
+    return res.success;
+  };
+
   useEffect(() => {
     if (adminFeedback) {
       const timer = setTimeout(() => setAdminFeedback(null), 4500);
       return () => clearTimeout(timer);
     }
   }, [adminFeedback]);
+
+  // Auto-dismiss live floating toast
+  useEffect(() => {
+    if (liveToast) {
+      const timer = setTimeout(() => setLiveToast(null), 8000);
+      return () => clearTimeout(timer);
+    }
+  }, [liveToast]);
 
   // Variant generator fields for Add/Edit
   const [variantStorageInput, setVariantStorageInput] = useState('128GB, 256GB, 512GB');
@@ -145,7 +258,7 @@ export const AdminDashboard: React.FC = () => {
       const prods = await api.getProducts({ status: 'all' });
       setAdminProducts(prods);
     } catch (err) {
-      console.error('Error fetching admin products:', err);
+      console.warn('Notice: Background admin products fetch delayed:', err);
     }
   };
 
@@ -164,7 +277,7 @@ export const AdminDashboard: React.FC = () => {
   const loadAdminData = async () => {
     setLoadingData(true);
     try {
-      const [an, ords, custs, lds, notifs, revs, sett, prods] = await Promise.all([
+      const [an, ords, custs, lds, notifs, revs, sett, prods, logs] = await Promise.all([
         api.getAnalytics().catch(() => null),
         api.getOrders().catch(() => []),
         api.getCustomers().catch(() => []),
@@ -172,7 +285,8 @@ export const AdminDashboard: React.FC = () => {
         api.getNotifications().catch(() => []),
         api.getReviews(undefined, false).catch(() => []),
         api.getSettings().catch(() => null),
-        api.getProducts({ status: 'all' }).catch(() => [])
+        api.getProducts({ status: 'all' }).catch(() => []),
+        api.getEmailLogs().catch(() => [])
       ]);
       if (an) setAnalytics(an);
       if (ords) setOrders(ords);
@@ -182,12 +296,122 @@ export const AdminDashboard: React.FC = () => {
       if (revs) setReviews(revs);
       if (sett) setSettingsForm(sett);
       if (prods && prods.length > 0) setAdminProducts(prods);
+      if (logs) setEmailLogs(logs);
     } catch (err) {
-      console.error('Failed to load admin data:', err);
+      console.warn('Notice: Background admin data fetch delayed:', err);
     } finally {
       setLoadingData(false);
     }
   };
+
+  // Populate initial known notification IDs
+  useEffect(() => {
+    if (notifications.length > 0 && knownNotificationIds.current.size === 0) {
+      notifications.forEach((n) => knownNotificationIds.current.add(n.id));
+    }
+  }, [notifications]);
+
+  // 1. Universal Real-Time SSE Stream: instant sub-second sync across laptop and phone (like WhatsApp)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    // Auto-subscribe device for background Web Push if permission already granted
+    if ('Notification' in window && Notification.permission === 'granted') {
+      subscribeDeviceToPush().catch(() => {});
+    }
+
+    const cleanup = startUniversalNotificationStream((newNotif, extraOrder) => {
+      // 1. Add to notifications state
+      setNotifications((prev) => {
+        if (prev.some((n) => n.id === newNotif.id)) return prev;
+        return [newNotif, ...prev];
+      });
+
+      // 2. Drop down classic top in-app banner
+      setTopBannerNotification(newNotif);
+
+      // 3. If an order came in with the notification, update orders list automatically
+      if (extraOrder) {
+        setOrders((prev) => {
+          if (prev.some((o) => o.id === extraOrder.id)) return prev;
+          return [extraOrder, ...prev];
+        });
+      }
+
+      // 4. Update floating toast
+      setLiveToast({
+        id: newNotif.id,
+        title: newNotif.title,
+        message: newNotif.message,
+        type: newNotif.type,
+        orderId: newNotif.orderId
+      });
+    });
+
+    return () => cleanup();
+  }, [isAuthenticated]);
+
+  // 2. Background polling fallback for high reliability
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const [freshNotifs, freshOrders] = await Promise.all([
+          api.getNotifications().catch(() => null),
+          api.getOrders().catch(() => null)
+        ]);
+
+        if (freshNotifs && freshNotifs.length > 0) {
+          const brandNew = freshNotifs.filter((n) => !knownNotificationIds.current.has(n.id));
+          if (brandNew.length > 0) {
+            brandNew.forEach((n) => knownNotificationIds.current.add(n.id));
+            setNotifications(freshNotifs);
+
+            const latest = brandNew[0];
+            // 1. Play classic audio chime
+            if (audioEnabled) {
+              playClassicNotificationSound();
+            }
+
+            // 2. Mobile haptic vibration
+            vibrateDevice();
+
+            // 3. Trigger native operating system push notification banner
+            showClassicNotification({
+              title: latest.title,
+              body: latest.message,
+              url: `/admin?tab=orders&orderId=${latest.orderId || ''}`
+            });
+
+            // 4. Slide down classic top in-app notification banner
+            setTopBannerNotification({
+              id: latest.id,
+              title: latest.title,
+              message: latest.message,
+              type: latest.type,
+              orderId: latest.orderId
+            });
+
+            // 5. Also show bottom-right toast
+            setLiveToast({
+              id: latest.id,
+              title: latest.title,
+              message: latest.message,
+              type: latest.type,
+              orderId: latest.orderId
+            });
+          }
+        }
+
+        if (freshOrders) {
+          setOrders(freshOrders);
+        }
+      } catch (_) {}
+    }, 8000);
+
+    return () => clearInterval(interval);
+  }, [isAuthenticated, audioEnabled]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -415,6 +639,7 @@ export const AdminDashboard: React.FC = () => {
     try {
       const saved = await api.updateSettings(settingsForm);
       setSettingsForm(saved);
+      setSettings(saved);
       await refreshSettings();
       setAdminFeedback({
         type: 'success',
@@ -429,14 +654,111 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
+
+  const handleSyncCloud = async () => {
+    setIsSyncingCloud(true);
+    try {
+      await refreshProducts();
+      await loadAdminProducts();
+      await loadAdminData();
+      setAdminFeedback({
+        type: 'success',
+        text: 'Cloud database synchronized with Firebase Firestore!'
+      });
+    } catch (err: any) {
+      setAdminFeedback({
+        type: 'error',
+        text: `Sync error: ${err.message || 'Failed'}`
+      });
+    } finally {
+      setIsSyncingCloud(false);
+    }
+  };
+
+  const handleExportCatalog = () => {
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(allProducts, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute('download', `era_gadgets_catalog_${new Date().toISOString().slice(0, 10)}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+    setAdminFeedback({
+      type: 'success',
+      text: `Exported ${allProducts.length} products to JSON backup file.`
+    });
+  };
+
+  const handleImportCatalog = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed)) {
+        throw new Error('Invalid format: expected a JSON array of products.');
+      }
+      setIsSyncingCloud(true);
+      for (const p of parsed) {
+        if (p.name && (p.basePrice !== undefined || p.variants)) {
+          await api.createProduct(p);
+        }
+      }
+      await refreshProducts();
+      await loadAdminProducts();
+      await loadAdminData();
+      setAdminFeedback({
+        type: 'success',
+        text: `Successfully imported and cloud-synced ${parsed.length} products!`
+      });
+    } catch (err: any) {
+      setAdminFeedback({
+        type: 'error',
+        text: `Import failed: ${err.message || 'Invalid JSON file'}`
+      });
+    } finally {
+      setIsSyncingCloud(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleSendTestEmail = async () => {
+    if (!settingsForm) return;
+    const recipient =
+      settingsForm.orderNotificationEmail ||
+      settingsForm.emailConfig?.orderNotificationEmail ||
+      'iwuajokuchidera64@gmail.com';
+
+    setTestEmailLoading(true);
+    setTestEmailFeedback(null);
+    try {
+      const res = await api.sendTestEmail(recipient);
+      setTestEmailFeedback({
+        type: res.success ? 'success' : 'error',
+        message: res.message
+      });
+      if (res.log) {
+        setEmailLogs((prev) => [res.log, ...prev]);
+      }
+    } catch (err: any) {
+      setTestEmailFeedback({
+        type: 'error',
+        message: err.message || 'Failed to dispatch test order email'
+      });
+    } finally {
+      setTestEmailLoading(false);
+    }
+  };
+
   // 1. ADMIN LOGIN VIEW
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen pt-32 pb-24 flex items-center justify-center px-4 bg-neutral-100">
         <div className="w-full max-w-md bg-white rounded-3xl p-8 shadow-xl border border-neutral-200 space-y-6">
           <div className="text-center space-y-2">
-            <div className="w-12 h-12 bg-neutral-950 rounded-2xl flex items-center justify-center text-white mx-auto text-sm font-bold shadow-md">
-              ERA
+            <div className="w-16 h-16 rounded-full overflow-hidden bg-white border border-neutral-200/90 p-1 mx-auto shadow-md flex items-center justify-center">
+              <img src="/logo.png" alt="Era Gadgets" className="w-full h-full object-contain" />
             </div>
             <h1 className="text-xl font-bold text-neutral-950">Era Gadgets Administration</h1>
             <p className="text-xs text-neutral-500">
@@ -551,8 +873,8 @@ export const AdminDashboard: React.FC = () => {
       {/* Admin Top Header */}
       <header className="bg-white border-b border-neutral-200 px-6 py-3 flex items-center justify-between sticky top-0 z-30 shadow-2xs">
         <div className="flex items-center gap-3">
-          <div className="w-7 h-7 bg-neutral-950 text-white text-xs font-bold rounded-lg flex items-center justify-center">
-            ERA
+          <div className="w-8 h-8 rounded-full overflow-hidden bg-white border border-neutral-200/90 p-0.5 shadow-2xs flex items-center justify-center shrink-0">
+            <img src="/logo.png" alt="Era Gadgets" className="w-full h-full object-contain" />
           </div>
           <div>
             <span className="text-sm font-bold text-neutral-950">Era Gadgets Administration</span>
@@ -562,26 +884,199 @@ export const AdminDashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          {/* Notifications Trigger */}
+        <div className="flex items-center gap-2.5">
+          {/* Quick 1-Click Test for Classic App Notification */}
+          <button
+            type="button"
+            onClick={handleTestAppNotification}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 text-xs font-bold transition-all cursor-pointer shadow-2xs"
+            title="Click to test classic app notification with audio chime and device banner"
+          >
+            <Bell className="w-3.5 h-3.5 text-emerald-600 animate-bounce" />
+            <span className="hidden sm:inline">Test App Alert</span>
+            <span className="sm:hidden">Test</span>
+          </button>
+
+          {/* Notifications Trigger & Interactive Dropdown */}
           <div className="relative">
             <button
-              onClick={() => {
-                if (unreadNotifications.length > 0) {
-                  api.markAllNotificationsRead();
-                  setNotifications(notifications.map((n) => ({ ...n, read: true })));
-                }
-              }}
-              className="p-2 rounded-full hover:bg-neutral-100 relative text-neutral-600 hover:text-neutral-900"
+              onClick={() => setShowNotificationDropdown(!showNotificationDropdown)}
+              className="p-2 rounded-full hover:bg-neutral-100 relative text-neutral-600 hover:text-neutral-900 transition-colors cursor-pointer"
               title={`${unreadNotifications.length} unread notifications`}
             >
               <Bell className="w-4 h-4" />
               {unreadNotifications.length > 0 && (
-                <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-rose-600 text-white text-[9px] font-bold flex items-center justify-center">
+                <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-rose-600 text-white text-[9px] font-bold flex items-center justify-center animate-pulse">
                   {unreadNotifications.length}
                 </span>
               )}
             </button>
+
+            {/* Notification Dropdown Panel */}
+            {showNotificationDropdown && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setShowNotificationDropdown(false)}
+                />
+                <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-neutral-200 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                  {/* Panel Header */}
+                  <div className="p-3.5 bg-neutral-900 text-white flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Bell className="w-4 h-4 text-emerald-400" />
+                      <span className="text-xs font-bold">App Notifications</span>
+                      {unreadNotifications.length > 0 && (
+                        <span className="px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-bold">
+                          {unreadNotifications.length} new
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {/* Audio toggle button */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const next = !audioEnabled;
+                          setAudioEnabled(next);
+                          try {
+                            localStorage.setItem('era_admin_audio_alerts', String(next));
+                          } catch (_) {}
+                          if (next) playClassicNotificationSound();
+                        }}
+                        className={`p-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
+                          audioEnabled ? 'bg-neutral-800 text-emerald-400' : 'bg-neutral-800/50 text-neutral-400'
+                        }`}
+                        title={audioEnabled ? 'Sound Chime: ON (Click to Mute)' : 'Sound Chime: MUTED (Click to Enable)'}
+                      >
+                        {audioEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+                      </button>
+
+                      {unreadNotifications.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            api.markAllNotificationsRead();
+                            setNotifications(notifications.map((n) => ({ ...n, read: true })));
+                          }}
+                          className="text-[11px] font-semibold text-neutral-300 hover:text-white px-2 py-1 rounded hover:bg-neutral-800 transition-colors cursor-pointer"
+                        >
+                          Mark all read
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Test notification action strip */}
+                  <div className="px-3 py-2 bg-neutral-50 border-b border-neutral-100 flex items-center justify-between text-xs">
+                    <span className="text-neutral-600 font-medium text-[11px]">Classic device notification:</span>
+                    <button
+                      type="button"
+                      onClick={handleTestAppNotification}
+                      className="px-2.5 py-1 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-white text-[10px] font-bold transition-colors cursor-pointer"
+                    >
+                      Trigger Test Chime 🔔
+                    </button>
+                  </div>
+
+                  {/* Browser Push Banner if not granted */}
+                  {!pushEnabled && (
+                    <div className="px-3.5 py-2 bg-emerald-50 border-b border-emerald-100 flex items-center justify-between text-xs text-emerald-900">
+                      <span className="text-[11px] font-medium">Desktop & mobile push alerts:</span>
+                      <button
+                        type="button"
+                        onClick={handleRequestPushPermission}
+                        className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold transition-colors whitespace-nowrap shadow-xs cursor-pointer"
+                      >
+                        Enable Push
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Notification List */}
+                  <div className="max-h-80 overflow-y-auto divide-y divide-neutral-100">
+                    {notifications.length === 0 ? (
+                      <div className="p-8 text-center text-neutral-400">
+                        <Bell className="w-6 h-6 mx-auto mb-2 opacity-40" />
+                        <p className="text-xs">No notifications yet</p>
+                        <p className="text-[10px] text-neutral-400 mt-0.5">Orders and important info will appear here.</p>
+                      </div>
+                    ) : (
+                      notifications.slice(0, 15).map((n) => (
+                        <div
+                          key={n.id}
+                          onClick={() => {
+                            if (!n.read) {
+                              api.markNotificationRead(n.id);
+                              setNotifications(notifications.map((item) => (item.id === n.id ? { ...item, read: true } : item)));
+                            }
+                            if (n.orderId) {
+                              setActiveTab('orders');
+                              const ord = orders.find((o) => o.id === n.orderId);
+                              if (ord) setSelectedOrderForVerification(ord);
+                              setShowNotificationDropdown(false);
+                            }
+                          }}
+                          className={`p-3 text-left hover:bg-neutral-50 transition-colors cursor-pointer flex items-start gap-2.5 ${
+                            !n.read ? 'bg-emerald-50/40' : ''
+                          }`}
+                        >
+                          <div className="shrink-0 mt-0.5">
+                            {n.type === 'order' ? (
+                              <div className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs">
+                                🛒
+                              </div>
+                            ) : n.type === 'payment_awaiting' ? (
+                              <div className="w-6 h-6 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-xs">
+                                💳
+                              </div>
+                            ) : n.type === 'low_stock' || n.type === 'sold_out' ? (
+                              <div className="w-6 h-6 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center text-xs">
+                                ⚠️
+                              </div>
+                            ) : (
+                              <div className="w-6 h-6 rounded-full bg-sky-100 text-sky-700 flex items-center justify-center text-xs">
+                                💬
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-1 mb-0.5">
+                              <span className="text-xs font-bold text-neutral-900 truncate">{n.title}</span>
+                              <span className="text-[10px] text-neutral-400 shrink-0">
+                                {new Date(n.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-neutral-600 line-clamp-2 leading-relaxed">{n.message}</p>
+                            {n.orderId && (
+                              <span className="inline-block mt-1 text-[10px] font-bold text-emerald-700 hover:underline">
+                                View Order Details →
+                              </span>
+                            )}
+                          </div>
+                          {!n.read && <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 mt-1.5" />}
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Panel Footer */}
+                  <div className="p-2.5 bg-neutral-50 border-t border-neutral-100 flex items-center justify-between text-[11px] text-neutral-500">
+                    <span className="truncate mr-2">Admins: primeculturehomes@gmail.com</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab('settings');
+                        setShowNotificationDropdown(false);
+                      }}
+                      className="text-neutral-900 font-bold hover:underline shrink-0"
+                    >
+                      Email Broadcast →
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
 
           <button
@@ -601,6 +1096,55 @@ export const AdminDashboard: React.FC = () => {
           </button>
         </div>
       </header>
+
+      {/* Classic App Dropdown Banner (iOS / Android Style) */}
+      <ClassicNotificationBanner
+        notification={topBannerNotification}
+        onDismiss={() => setTopBannerNotification(null)}
+        onOpenOrder={(orderId) => {
+          setActiveTab('orders');
+          const ord = orders.find((o) => o.id === orderId);
+          if (ord) setSelectedOrderForVerification(ord);
+        }}
+      />
+
+      {/* Prompt Banner to Enable Classic App Push Notifications */}
+      {showPermissionBanner && (
+        <div className="bg-gradient-to-r from-neutral-900 via-neutral-950 to-neutral-900 text-white px-4 py-2.5 border-b border-neutral-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-inner">
+          <div className="flex items-center gap-2.5">
+            <div className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+              <Bell className="w-3.5 h-3.5" />
+            </div>
+            <span className="leading-snug">
+              <strong className="text-white">Enable Classic App Notifications:</strong> Receive instant device alerts, vibrations, and audio chimes on your phone or computer screen whenever orders are made.
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleRequestPushPermission}
+              className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold transition-colors cursor-pointer shadow-sm text-xs"
+            >
+              Turn On Notifications
+            </button>
+            <button
+              type="button"
+              onClick={handleTestAppNotification}
+              className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold transition-colors cursor-pointer text-xs"
+            >
+              Test Alert 🔔
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowPermissionBanner(false)}
+              className="text-neutral-400 hover:text-white p-1 rounded transition-colors cursor-pointer"
+              title="Dismiss"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Admin Workspace */}
       <div className="flex-1 flex flex-col md:flex-row">
@@ -750,6 +1294,21 @@ export const AdminDashboard: React.FC = () => {
           >
             <MessageCircle className="w-4 h-4 text-emerald-600" />
             <span>WhatsApp Notifications</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('homepage');
+              setAdminActiveTab('homepage');
+            }}
+            className={`w-full text-left px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-2.5 transition-colors ${
+              activeTab === 'homepage'
+                ? 'bg-neutral-950 text-white'
+                : 'text-neutral-600 hover:bg-neutral-100'
+            }`}
+          >
+            <LayoutTemplate className="w-4 h-4 text-amber-500" />
+            <span>Homepage & Visuals</span>
           </button>
 
           <button
@@ -1132,7 +1691,7 @@ export const AdminDashboard: React.FC = () => {
                             }
                           })
                         }
-                        placeholder="e.g. Guaranty Trust Bank (GTBank)"
+                        placeholder="e.g. Kuda MFB"
                         className="w-full p-2.5 border border-neutral-300 rounded-xl text-xs"
                       />
                     </div>
@@ -1157,7 +1716,7 @@ export const AdminDashboard: React.FC = () => {
                             }
                           })
                         }
-                        placeholder="e.g. Era Gadgets Limited"
+                        placeholder="e.g. Chidera Kelvin"
                         className="w-full p-2.5 border border-neutral-300 rounded-xl text-xs"
                       />
                     </div>
@@ -1182,7 +1741,7 @@ export const AdminDashboard: React.FC = () => {
                             }
                           })
                         }
-                        placeholder="0123456789"
+                        placeholder="2064248680"
                         className="w-full p-2.5 border border-neutral-300 rounded-xl text-xs font-mono"
                       />
                     </div>
@@ -1609,7 +2168,7 @@ export const AdminDashboard: React.FC = () => {
                             }
                           })
                         }
-                        placeholder="2348145550192"
+                        placeholder="2349036422181"
                         className="w-full p-2.5 border border-neutral-300 rounded-xl text-xs"
                       />
                     </div>
@@ -1809,16 +2368,56 @@ export const AdminDashboard: React.FC = () => {
             <div className="space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-xl sm:text-2xl font-bold text-neutral-950">Product Management</h2>
-                  <p className="text-xs text-neutral-500">Edit prices, duplicate devices, mark sold, and update inventory.</p>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-xl sm:text-2xl font-bold text-neutral-950">Product Management</h2>
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      <Cloud className="w-3 h-3 text-emerald-600" />
+                      Cloud Protected (Firestore)
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-500">
+                    Edit prices, duplicate devices, mark sold, and update inventory. All changes are permanently backed up to the cloud.
+                  </p>
                 </div>
-                <button
-                  onClick={startCreateProduct}
-                  className="px-4 py-2 bg-neutral-950 text-white rounded-xl text-xs font-semibold hover:bg-neutral-800 flex items-center gap-1.5 self-start"
-                >
-                  <PlusCircle className="w-4 h-4" />
-                  <span>+ Add Product</span>
-                </button>
+                <div className="flex flex-wrap items-center gap-2 self-start">
+                  <button
+                    onClick={handleSyncCloud}
+                    disabled={isSyncingCloud}
+                    className="px-3 py-2 bg-white border border-neutral-200 text-neutral-700 rounded-xl text-xs font-semibold hover:bg-neutral-50 flex items-center gap-1.5 transition-colors disabled:opacity-60 shadow-2xs"
+                    title="Force sync with live cloud Firestore database"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingCloud ? 'animate-spin' : ''}`} />
+                    <span>{isSyncingCloud ? 'Syncing...' : 'Sync Cloud'}</span>
+                  </button>
+
+                  <button
+                    onClick={handleExportCatalog}
+                    className="px-3 py-2 bg-white border border-neutral-200 text-neutral-700 rounded-xl text-xs font-semibold hover:bg-neutral-50 flex items-center gap-1.5 transition-colors shadow-2xs"
+                    title="Download complete catalog backup (.json) to your computer"
+                  >
+                    <Download className="w-3.5 h-3.5 text-neutral-500" />
+                    <span>Backup (.json)</span>
+                  </button>
+
+                  <label className="px-3 py-2 bg-white border border-neutral-200 text-neutral-700 rounded-xl text-xs font-semibold hover:bg-neutral-50 flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs">
+                    <Upload className="w-3.5 h-3.5 text-neutral-500" />
+                    <span>Import</span>
+                    <input
+                      type="file"
+                      accept=".json"
+                      onChange={handleImportCatalog}
+                      className="hidden"
+                    />
+                  </label>
+
+                  <button
+                    onClick={startCreateProduct}
+                    className="px-4 py-2 bg-neutral-950 text-white rounded-xl text-xs font-semibold hover:bg-neutral-800 flex items-center gap-1.5 shadow-sm"
+                  >
+                    <PlusCircle className="w-4 h-4" />
+                    <span>+ Add Product</span>
+                  </button>
+                </div>
               </div>
 
               {/* Filter & Search Bar */}
@@ -2215,58 +2814,374 @@ export const AdminDashboard: React.FC = () => {
                   </div>
                 </div>
 
+                <div className="bg-white p-6 rounded-2xl border border-neutral-200/80 shadow-2xs space-y-5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                        <Mail className="w-4 h-4 text-emerald-600" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold text-neutral-900">
+                          Admin Broadcast Notifications (Orders & Useful Alerts)
+                        </h3>
+                        <p className="text-xs text-neutral-500">
+                          Instantly alerts everyone who has access to the admin panel when orders are placed, payment proofs uploaded, stock runs low, or customer leads arrive.
+                        </p>
+                      </div>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settingsForm.emailConfig?.enabled ?? true}
+                        onChange={(e) => {
+                          const enabled = e.target.checked;
+                          setSettingsForm({
+                            ...settingsForm,
+                            emailConfig: {
+                              ...(settingsForm.emailConfig || {
+                                orderNotificationEmail: settingsForm.orderNotificationEmail || 'primeculturehomes@gmail.com, iwuajokuchidera64@gmail.com',
+                                enabled: true
+                              }),
+                              enabled
+                            }
+                          });
+                        }}
+                        className="rounded text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span className="text-xs font-semibold text-neutral-700">Enabled</span>
+                    </label>
+                  </div>
+
+                  <div className="space-y-4">
+                    {/* Active Recipients List */}
+                    <div className="p-3.5 bg-neutral-50 rounded-xl border border-neutral-200 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-neutral-800">
+                          Active Admin Broadcast Recipients:
+                        </span>
+                        <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                          All Admins Notified
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-neutral-200 text-xs font-semibold text-neutral-900 shadow-2xs">
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                          primeculturehomes@gmail.com <span className="text-[10px] text-neutral-400">(Owner)</span>
+                        </span>
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-neutral-200 text-xs font-semibold text-neutral-900 shadow-2xs">
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                          iwuajokuchidera64@gmail.com <span className="text-[10px] text-neutral-400">(Admin)</span>
+                        </span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-semibold text-neutral-800 block mb-1">
+                        Additional Admin Notification Emails (comma-separated)
+                      </label>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="text"
+                          value={
+                            settingsForm.orderNotificationEmail ||
+                            settingsForm.emailConfig?.orderNotificationEmail ||
+                            'primeculturehomes@gmail.com, iwuajokuchidera64@gmail.com'
+                          }
+                          onChange={(e) => {
+                            const newEmails = e.target.value;
+                            setSettingsForm({
+                              ...settingsForm,
+                              orderNotificationEmail: newEmails,
+                              emailConfig: {
+                                ...(settingsForm.emailConfig || { enabled: true }),
+                                orderNotificationEmail: newEmails
+                              }
+                            });
+                          }}
+                          placeholder="e.g. primeculturehomes@gmail.com, iwuajokuchidera64@gmail.com, manager@eragadgets.ng"
+                          className="flex-1 p-2.5 border border-neutral-300 rounded-xl text-xs font-medium focus:ring-2 focus:ring-neutral-950 focus:border-neutral-950 bg-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleSendTestEmail}
+                          disabled={testEmailLoading}
+                          className="px-4 py-2.5 bg-neutral-950 hover:bg-neutral-800 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2 whitespace-nowrap disabled:opacity-50 shadow-sm cursor-pointer"
+                        >
+                          {testEmailLoading ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Send className="w-3.5 h-3.5 text-emerald-400" />
+                          )}
+                          Broadcast Test Alert to All Admins
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-neutral-500 mt-1.5 leading-relaxed">
+                        Every order, payment receipt, low stock threshold, and customer lead automatically triggers an immediate broadcast notification to all emails listed above and sounds live chimes across all open admin panels.
+                      </p>
+                    </div>
+
+                    {/* Audio & Push Test Controls */}
+                    <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-neutral-100">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          playClassicNotificationSound();
+                          vibrateDevice();
+                        }}
+                        className="px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 border border-neutral-200 cursor-pointer"
+                      >
+                        <Volume2 className="w-3.5 h-3.5 text-neutral-600" />
+                        <span>Test Audio Alert Chime</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleRequestPushPermission}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 border cursor-pointer ${
+                          pushEnabled
+                            ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                            : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-800 border-neutral-200'
+                        }`}
+                      >
+                        <Bell className="w-3.5 h-3.5 text-neutral-600" />
+                        <span>{pushEnabled ? '✓ Browser Push Alerts Active' : 'Enable Browser Push Alerts'}</span>
+                      </button>
+                    </div>
+
+                    {testEmailFeedback && (
+                      <div
+                        className={`p-3 rounded-xl text-xs font-medium flex items-center justify-between ${
+                          testEmailFeedback.type === 'success'
+                            ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                            : 'bg-rose-50 text-rose-800 border border-rose-200'
+                        }`}
+                      >
+                        <span>{testEmailFeedback.message}</span>
+                        <button
+                          type="button"
+                          onClick={() => setTestEmailFeedback(null)}
+                          className="text-xs underline ml-2 opacity-70 hover:opacity-100"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Advanced SMTP Collapsible */}
+                    <div className="pt-2 border-t border-neutral-100">
+                      <button
+                        type="button"
+                        onClick={() => setShowAdvancedSmtp(!showAdvancedSmtp)}
+                        className="text-xs font-bold text-neutral-600 hover:text-neutral-900 flex items-center gap-1.5"
+                      >
+                        <Server className="w-3.5 h-3.5" />
+                        {showAdvancedSmtp ? 'Hide Custom SMTP Mail Server Settings' : 'Custom SMTP Mail Server Settings (Optional)'}
+                      </button>
+
+                      {showAdvancedSmtp && (
+                        <div className="mt-3 p-4 bg-neutral-50 rounded-xl border border-neutral-200 space-y-3">
+                          <p className="text-[11px] text-neutral-500">
+                            Optional: Configure a custom SMTP provider (Gmail App Password, SendGrid, Mailgun, Brevo, AWS SES) for direct outbound delivery. If omitted, orders are cleanly formatted, saved, and viewable in the dispatch outbox below.
+                          </p>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-[11px] font-semibold text-neutral-700 block mb-1">
+                                SMTP Host
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="e.g. smtp.gmail.com"
+                                value={settingsForm.emailConfig?.smtpHost || ''}
+                                onChange={(e) =>
+                                  setSettingsForm({
+                                    ...settingsForm,
+                                    emailConfig: {
+                                      ...(settingsForm.emailConfig || {
+                                        orderNotificationEmail: settingsForm.orderNotificationEmail || 'iwuajokuchidera64@gmail.com',
+                                        enabled: true
+                                      }),
+                                      smtpHost: e.target.value
+                                    }
+                                  })
+                                }
+                                className="w-full p-2 bg-white border border-neutral-300 rounded-lg text-xs"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[11px] font-semibold text-neutral-700 block mb-1">
+                                SMTP Port
+                              </label>
+                              <input
+                                type="number"
+                                placeholder="587 or 465"
+                                value={settingsForm.emailConfig?.smtpPort || 587}
+                                onChange={(e) =>
+                                  setSettingsForm({
+                                    ...settingsForm,
+                                    emailConfig: {
+                                      ...(settingsForm.emailConfig || {
+                                        orderNotificationEmail: settingsForm.orderNotificationEmail || 'iwuajokuchidera64@gmail.com',
+                                        enabled: true
+                                      }),
+                                      smtpPort: Number(e.target.value)
+                                    }
+                                  })
+                                }
+                                className="w-full p-2 bg-white border border-neutral-300 rounded-lg text-xs"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[11px] font-semibold text-neutral-700 block mb-1">
+                                SMTP Username / Email
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="e.g. your-email@gmail.com"
+                                value={settingsForm.emailConfig?.smtpUser || ''}
+                                onChange={(e) =>
+                                  setSettingsForm({
+                                    ...settingsForm,
+                                    emailConfig: {
+                                      ...(settingsForm.emailConfig || {
+                                        orderNotificationEmail: settingsForm.orderNotificationEmail || 'iwuajokuchidera64@gmail.com',
+                                        enabled: true
+                                      }),
+                                      smtpUser: e.target.value
+                                    }
+                                  })
+                                }
+                                className="w-full p-2 bg-white border border-neutral-300 rounded-lg text-xs"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[11px] font-semibold text-neutral-700 block mb-1">
+                                SMTP Password / App Password
+                              </label>
+                              <input
+                                type="password"
+                                placeholder="••••••••••••••••"
+                                value={settingsForm.emailConfig?.smtpPass || ''}
+                                onChange={(e) =>
+                                  setSettingsForm({
+                                    ...settingsForm,
+                                    emailConfig: {
+                                      ...(settingsForm.emailConfig || {
+                                        orderNotificationEmail: settingsForm.orderNotificationEmail || 'iwuajokuchidera64@gmail.com',
+                                        enabled: true
+                                      }),
+                                      smtpPass: e.target.value
+                                    }
+                                  })
+                                }
+                                className="w-full p-2 bg-white border border-neutral-300 rounded-lg text-xs"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[11px] font-semibold text-neutral-700 block mb-1">
+                                Sender Name
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="Era Gadgets Orders"
+                                value={settingsForm.emailConfig?.fromName || 'Era Gadgets Orders'}
+                                onChange={(e) =>
+                                  setSettingsForm({
+                                    ...settingsForm,
+                                    emailConfig: {
+                                      ...(settingsForm.emailConfig || {
+                                        orderNotificationEmail: settingsForm.orderNotificationEmail || 'iwuajokuchidera64@gmail.com',
+                                        enabled: true
+                                      }),
+                                      fromName: e.target.value
+                                    }
+                                  })
+                                }
+                                className="w-full p-2 bg-white border border-neutral-300 rounded-lg text-xs"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[11px] font-semibold text-neutral-700 block mb-1">
+                                Sender Email Address
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="orders@eragadgets.ng"
+                                value={settingsForm.emailConfig?.fromEmail || 'orders@eragadgets.ng'}
+                                onChange={(e) =>
+                                  setSettingsForm({
+                                    ...settingsForm,
+                                    emailConfig: {
+                                      ...(settingsForm.emailConfig || {
+                                        orderNotificationEmail: settingsForm.orderNotificationEmail || 'iwuajokuchidera64@gmail.com',
+                                        enabled: true
+                                      }),
+                                      fromEmail: e.target.value
+                                    }
+                                  })
+                                }
+                                className="w-full p-2 bg-white border border-neutral-300 rounded-lg text-xs"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
                 <div className="bg-white p-6 rounded-2xl border border-neutral-200/80 shadow-2xs space-y-4">
                   <h3 className="text-xs font-bold text-neutral-400 uppercase tracking-wider">
                     Logistics & Free Delivery Threshold
                   </h3>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                       <label className="text-xs font-semibold text-neutral-700 block mb-1">
-                        Lagos Delivery (₦)
+                        Fixed Delivery Fee (₦)
                       </label>
                       <input
                         type="number"
-                        value={settingsForm.lagosDeliveryFee}
-                        onChange={(e) =>
-                          setSettingsForm({ ...settingsForm, lagosDeliveryFee: Number(e.target.value) })
-                        }
-                        className="w-full p-2.5 border border-neutral-300 rounded-xl text-xs"
+                        value={settingsForm.deliveryFee || settingsForm.lagosDeliveryFee || 5000}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          setSettingsForm({
+                            ...settingsForm,
+                            deliveryFee: val,
+                            lagosDeliveryFee: val,
+                            outsideLagosDeliveryFee: val
+                          });
+                        }}
+                        className="w-full p-2.5 border border-neutral-300 rounded-xl text-xs font-semibold"
                       />
+                      <p className="text-[11px] text-neutral-400 mt-1">
+                        Fixed flat rate for doorstep courier delivery across Nigeria (default: ₦5,000).
+                      </p>
                     </div>
 
                     <div>
                       <label className="text-xs font-semibold text-neutral-700 block mb-1">
-                        Outside Lagos Fee (₦)
+                        Showroom Pickup Fee (₦)
                       </label>
                       <input
                         type="number"
-                        value={settingsForm.outsideLagosDeliveryFee}
+                        value={settingsForm.pickupFee || 0}
                         onChange={(e) =>
                           setSettingsForm({
                             ...settingsForm,
-                            outsideLagosDeliveryFee: Number(e.target.value)
+                            pickupFee: Number(e.target.value)
                           })
                         }
                         className="w-full p-2.5 border border-neutral-300 rounded-xl text-xs"
                       />
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-semibold text-neutral-700 block mb-1">
-                        Free Delivery Threshold (₦)
-                      </label>
-                      <input
-                        type="number"
-                        value={settingsForm.freeDeliveryThreshold}
-                        onChange={(e) =>
-                          setSettingsForm({
-                            ...settingsForm,
-                            freeDeliveryThreshold: Number(e.target.value)
-                          })
-                        }
-                        className="w-full p-2.5 border border-neutral-300 rounded-xl text-xs"
-                      />
+                      <p className="text-[11px] text-neutral-400 mt-1">
+                        Fee for collecting directly at the Victoria Island showroom (default: ₦0 / FREE).
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -2274,13 +3189,103 @@ export const AdminDashboard: React.FC = () => {
                 <div className="flex justify-end">
                   <button
                     type="submit"
-                    className="px-6 py-2.5 bg-neutral-950 text-white rounded-xl text-xs font-bold hover:bg-neutral-800"
+                    className="px-6 py-2.5 bg-neutral-950 text-white rounded-xl text-xs font-bold hover:bg-neutral-800 transition-colors shadow-sm"
                   >
                     Save Business Settings
                   </button>
                 </div>
               </form>
+
+              {/* Email Outbox & Dispatch History */}
+              <div className="bg-white p-6 rounded-2xl border border-neutral-200/80 shadow-2xs space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Mail className="w-4 h-4 text-neutral-500" />
+                    <h3 className="text-sm font-bold text-neutral-900">
+                      Recent Order Email Notifications Outbox
+                    </h3>
+                  </div>
+                  <span className="text-xs text-neutral-500 font-mono">
+                    {emailLogs.length} dispatched
+                  </span>
+                </div>
+
+                {emailLogs.length === 0 ? (
+                  <p className="text-xs text-neutral-400 py-3 text-center border border-dashed border-neutral-200 rounded-xl">
+                    No order notification emails logged yet. When an order is placed, it will show here.
+                  </p>
+                ) : (
+                  <div className="divide-y divide-neutral-100 max-h-72 overflow-y-auto rounded-xl border border-neutral-200">
+                    {emailLogs.slice(0, 15).map((log) => (
+                      <div key={log.id} className="p-3 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-neutral-50">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-semibold text-neutral-900">{log.subject}</span>
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                log.status === 'sent'
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : log.status === 'failed'
+                                  ? 'bg-rose-100 text-rose-700'
+                                  : 'bg-sky-100 text-sky-700'
+                              }`}
+                            >
+                              {log.status.toUpperCase()}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-neutral-500 truncate mt-0.5">
+                            To: <span className="font-mono text-neutral-700">{log.recipient}</span>
+                            {log.previewText && ` · ${log.previewText}`}
+                          </div>
+                        </div>
+                        <div className="text-[10px] text-neutral-400 whitespace-nowrap self-start sm:self-center font-mono">
+                          {new Date(log.sentAt).toLocaleString('en-GB', {
+                            dateStyle: 'short',
+                            timeStyle: 'short'
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
+          )}
+
+          {/* TAB 10: HOMEPAGE & VISUALS EDITOR */}
+          {activeTab === 'homepage' && (settings || settingsForm) && (
+            <AdminHomeEditor
+              settings={(settingsForm || settings)!}
+              products={allProducts}
+              onSave={async (newHomeConfig) => {
+                const payload = {
+                  ...(settingsForm || settings || {}),
+                  homeConfig: newHomeConfig
+                };
+                const updated = await api.updateSettings(payload);
+                setSettingsForm(updated);
+                setSettings(updated);
+                await refreshSettings();
+                setAdminFeedback({
+                  type: 'success',
+                  text: 'Homepage content & images successfully saved and published live!'
+                });
+              }}
+              onResetDefaults={async () => {
+                const updated = await api.resetHomeConfig();
+                setSettingsForm(updated);
+                setSettings(updated);
+                await refreshSettings();
+                setAdminFeedback({
+                  type: 'success',
+                  text: 'Homepage layout and copy reset to factory defaults!'
+                });
+              }}
+              onPreview={() => {
+                setCurrentView('home');
+                window.scrollTo({ top: 0, behavior: 'instant' });
+              }}
+            />
           )}
         </main>
       </div>
@@ -2554,6 +3559,41 @@ export const AdminDashboard: React.FC = () => {
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* LIVE IN-APP FLOATING ALERT TOAST */}
+      {liveToast && (
+        <div className="fixed bottom-5 right-5 z-50 max-w-sm bg-neutral-950 text-white p-4 rounded-2xl shadow-2xl border border-neutral-800 animate-in slide-in-from-bottom-5 duration-300">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <span className="text-xl shrink-0">
+                {liveToast.type === 'order' ? '🛒' : liveToast.type === 'payment_awaiting' ? '💳' : liveToast.type === 'low_stock' || liveToast.type === 'sold_out' ? '⚠️' : '🔔'}
+              </span>
+              <div>
+                <h4 className="text-xs font-bold text-emerald-400">{liveToast.title}</h4>
+                <p className="text-[11px] text-neutral-300 mt-0.5 leading-snug">{liveToast.message}</p>
+                {liveToast.orderId && (
+                  <button
+                    onClick={() => {
+                      setActiveTab('orders');
+                      const ord = orders.find((o) => o.id === liveToast.orderId);
+                      if (ord) setSelectedOrderForVerification(ord);
+                      setLiveToast(null);
+                    }}
+                    className="mt-2 text-[11px] font-bold text-black bg-emerald-400 hover:bg-emerald-300 px-3 py-1 rounded-full inline-block transition-colors cursor-pointer"
+                  >
+                    Open Order Now →
+                  </button>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => setLiveToast(null)}
+              className="text-neutral-400 hover:text-white p-1 rounded-md transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       )}

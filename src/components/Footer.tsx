@@ -13,7 +13,7 @@ export const Footer: React.FC = () => {
   };
 
   const whatsappUrl = generateGeneralWhatsAppUrl(
-    settings?.whatsappNumber || '2348145550192',
+    settings?.whatsappNumber || '2349036422181',
     'Hello Era Gadgets Concierge, I would like to make an inquiry regarding available devices.'
   );
 
@@ -62,6 +62,29 @@ export const Footer: React.FC = () => {
                 </p>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Brand Identification Bar */}
+      <div className="border-b border-neutral-900 py-8 bg-neutral-950/60">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-6">
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-full overflow-hidden bg-white p-1 border border-neutral-800 shadow-md shrink-0 flex items-center justify-center">
+              <img src="/logo.png" alt="Era Gadgets Logo" className="w-full h-full object-contain" />
+            </div>
+            <div className="text-center sm:text-left">
+              <h3 className="text-white font-bold text-lg tracking-tight">Era Gadgets</h3>
+              <p className="text-neutral-400 text-xs">
+                {settings?.tagline || 'The technology you actually want · Genuine flagship hardware in Nigeria.'}
+              </p>
+            </div>
+          </div>
+          <div className="text-xs text-neutral-400 flex items-center gap-3">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-neutral-900 border border-neutral-800 text-emerald-400 text-[11px] font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              Victoria Island Flagship Showroom
+            </span>
           </div>
         </div>
       </div>
@@ -203,7 +226,9 @@ export const Footer: React.FC = () => {
               </p>
               <p className="flex items-center gap-2">
                 <Phone className="w-4 h-4 text-neutral-500 shrink-0" />
-                <span>{settings?.phone || '+234 814 555 0192'}</span>
+                <a href="tel:+2349036422181" className="hover:text-white transition-colors">
+                  {settings?.phone || '+234 903 642 2181'}
+                </a>
               </p>
               <p className="flex items-center gap-2">
                 <Mail className="w-4 h-4 text-neutral-500 shrink-0" />

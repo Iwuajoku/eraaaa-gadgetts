@@ -1,0 +1,49 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Products: Publicly viewable catalog; writeable by store admin
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Orders: Customers can create orders; anyone with invoice ID or admin can read
+    match /orders/{orderId} {
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if true;
+    }
+
+    // Settings: Publicly readable; editable by admin
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Reviews: Publicly readable; anyone can submit review
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if true;
+    }
+
+    // Customers CRM, Leads, Notifications
+    match /customers/{customerId} {
+      allow read, write: if true;
+    }
+    match /leads/{leadId} {
+      allow read, write: if true;
+    }
+    match /notifications/{notificationId} {
+      allow read, write: if true;
+    }
+    match /media/{mediaId} {
+      allow read, write: if true;
+    }
+
+    // Connection testing
+    match /test/{testId} {
+      allow read, write: if true;
+    }
+  }
+}

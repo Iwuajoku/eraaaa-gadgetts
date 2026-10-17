@@ -8,3 +8,17 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 );
+
+// Register Service Worker for native app push notifications & offline support
+if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/sw.js')
+      .then((reg) => {
+        console.log('[SW] Service Worker registered for app notifications:', reg.scope);
+      })
+      .catch((err) => {
+        console.warn('[SW] Service worker registration notice:', err);
+      });
+  });
+}

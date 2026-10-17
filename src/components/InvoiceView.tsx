@@ -19,7 +19,7 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, settings, onBac
 
   const whatsappMessage = `Hello Era Gadgets Concierge, regarding invoice ${order.invoiceNumber} for order ${order.orderNumber}.`;
   const whatsappUrl = generateGeneralWhatsAppUrl(
-    settings?.whatsappNumber || '2348145550192',
+    settings?.whatsappNumber || '2349036422181',
     whatsappMessage
   );
 
@@ -74,9 +74,9 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, settings, onBac
         {/* Invoice Header */}
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-6 pb-8 border-b border-neutral-200">
           <div className="space-y-2">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-neutral-950 text-white font-bold text-xs flex items-center justify-center tracking-wider">
-                ERA
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full overflow-hidden bg-white border border-neutral-200 p-0.5 flex items-center justify-center shrink-0 shadow-2xs">
+                <img src="/logo.png" alt="Era Gadgets" className="w-full h-full object-contain" />
               </div>
               <span className="text-xl font-bold tracking-tight text-neutral-950">
                 Era Gadgets Limited
@@ -86,7 +86,7 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, settings, onBac
               {settings?.address || 'Victoria Island Flagship Showroom, Lagos, Nigeria'}
             </p>
             <div className="text-[11px] text-neutral-500 space-y-0.5">
-              <p>Phone: {settings?.phone || '+234 814 555 0192'}</p>
+              <p>Phone: {settings?.phone || '+234 903 642 2181'}</p>
               <p>Email: {settings?.email || 'concierge@eragadgets.ng'}</p>
               <p>Web: https://eragadgets.ng</p>
             </div>
@@ -169,9 +169,9 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, settings, onBac
 
             {order.paymentMethod === 'bank_transfer' && (
               <div className="mt-2 pt-2 border-t border-neutral-100 text-[11px] text-neutral-500 sm:text-right">
-                <p className="font-medium text-neutral-700">Bank: {settings?.paymentMethods.bankTransfer.bankName || 'GTBank'}</p>
-                <p>Account: {settings?.paymentMethods.bankTransfer.accountName || 'Era Gadgets Limited'}</p>
-                <p className="font-mono">Account No: {settings?.paymentMethods.bankTransfer.accountNumber || '0123456789'}</p>
+                <p className="font-medium text-neutral-700">Bank: {settings?.paymentMethods?.bankTransfer?.bankName || 'Kuda MFB'}</p>
+                <p>Account: {settings?.paymentMethods?.bankTransfer?.accountName || 'Chidera Kelvin'}</p>
+                <p className="font-mono font-semibold text-neutral-900">Account No: {settings?.paymentMethods?.bankTransfer?.accountNumber || '2064248680'}</p>
               </div>
             )}
           </div>

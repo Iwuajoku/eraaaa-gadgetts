@@ -10,7 +10,7 @@ export const FloatingWhatsApp: React.FC = () => {
   if (currentView === 'admin' || currentView === 'checkout') return null;
 
   const url = generateGeneralWhatsAppUrl(
-    settings?.whatsappNumber || '2348145550192',
+    settings?.whatsappNumber || '2349036422181',
     'Hello Era Gadgets! I would like to inquire about available phones and gadgets.'
   );
 

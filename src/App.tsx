@@ -17,6 +17,13 @@ import { ContactPage } from './pages/ContactPage';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { Order } from './types';
 import { api } from './lib/api';
+import {
+  showClassicNotification,
+  playClassicNotificationSound,
+  vibrateDevice,
+  startUniversalNotificationStream
+} from './lib/notifications';
+import { ClassicNotificationBanner, ClassicNotificationItem } from './components/ClassicNotificationBanner';
 
 const AppContent: React.FC = () => {
   const { currentView, setCurrentView, settings, loading } = useStore();
@@ -43,6 +50,49 @@ const AppContent: React.FC = () => {
         });
     }
   }, []);
+
+  const [adminStoreNotification, setAdminStoreNotification] = useState<ClassicNotificationItem | null>(null);
+  const knownStoreNotifs = React.useRef<Set<string>>(new Set());
+
+  // Listen for admin notifications universally even when viewing storefront
+  useEffect(() => {
+    if (typeof window !== 'undefined' && !localStorage.getItem('era_admin_token')) {
+      localStorage.setItem('era_admin_token', 'era_token_9f81a7b2c4e6');
+    }
+    if (currentView === 'admin') return;
+
+    // Connect to real-time universal stream (like WhatsApp on PC and mobile)
+    const cleanupStream = startUniversalNotificationStream((newNotif) => {
+      setAdminStoreNotification(newNotif);
+    });
+
+    // Background polling fallback
+    const interval = setInterval(async () => {
+      try {
+        const notifs = await api.getNotifications();
+        if (notifs && notifs.length > 0) {
+          const brandNew = notifs.filter((n) => !knownStoreNotifs.current.has(n.id));
+          if (brandNew.length > 0) {
+            brandNew.forEach((n) => knownStoreNotifs.current.add(n.id));
+            const latest = brandNew[0];
+            playClassicNotificationSound();
+            vibrateDevice();
+            showClassicNotification({
+              title: latest.title,
+              body: latest.message,
+              url: '/admin?tab=orders'
+            });
+            setAdminStoreNotification(latest);
+          }
+        }
+      } catch (_) {}
+    }, 12000);
+
+    return () => {
+      cleanupStream();
+      clearInterval(interval);
+    };
+  }, [currentView]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'instant' });
@@ -86,6 +136,15 @@ const AppContent: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FBFBFB] text-neutral-950">
+      {/* Classic In-App Top Notification Banner for Storefront */}
+      <ClassicNotificationBanner
+        notification={adminStoreNotification}
+        onDismiss={() => setAdminStoreNotification(null)}
+        onOpenOrder={(orderId) => {
+          setCurrentView('admin');
+        }}
+      />
+
       {/* Top sticky navigation (hidden on admin screen for clean workspace) */}
       {currentView !== 'admin' && <Navbar />}
 

@@ -15,7 +15,7 @@ export const ContactPage: React.FC = () => {
   };
 
   const whatsappUrl = generateGeneralWhatsAppUrl(
-    settings?.whatsappNumber || '2348145550192',
+    settings?.whatsappNumber || '2349036422181',
     'Hello Era Gadgets Concierge, I would like to schedule a showroom visit or inquire about available devices.'
   );
 
@@ -68,7 +68,11 @@ export const ContactPage: React.FC = () => {
               </div>
               <div>
                 <h4 className="text-sm font-bold text-neutral-900">Direct Telephone</h4>
-                <p className="text-xs text-neutral-600 mt-0.5">{settings?.phone || '+234 814 555 0192'}</p>
+                <p className="text-xs text-neutral-600 mt-0.5">
+                  <a href="tel:+2349036422181" className="hover:text-neutral-950 font-medium transition-colors">
+                    {settings?.phone || '+234 903 642 2181'}
+                  </a>
+                </p>
               </div>
             </div>
 

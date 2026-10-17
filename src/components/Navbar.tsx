@@ -61,13 +61,20 @@ export const Navbar: React.FC = () => {
                 onClick={() => handleNavClick('home', 'all')}
                 className="group flex items-center gap-2.5 text-left focus:outline-none"
               >
-                {/* Minimalist Geometric Monogram */}
-                <div className="w-8 h-8 rounded-lg bg-neutral-950 flex items-center justify-center text-white font-bold tracking-tighter text-sm transition-transform duration-200 group-hover:scale-95 shadow-sm">
-                  <span className="font-semibold text-xs tracking-widest pl-0.5">ERA</span>
+                {/* Official Era Gadgets Circular Emblem */}
+                <div className="w-9 h-9 rounded-full overflow-hidden bg-white border border-neutral-200/80 shadow-2xs flex items-center justify-center p-0.5 transition-transform duration-200 group-hover:scale-95 shrink-0">
+                  <img
+                    src="/logo.png"
+                    alt="Era Gadgets Logo"
+                    className="w-full h-full object-contain"
+                  />
                 </div>
                 <div className="flex flex-col">
-                  <span className="text-base font-semibold tracking-tight text-neutral-950 group-hover:text-neutral-700 transition-colors">
+                  <span className="text-base font-bold tracking-tight text-neutral-950 group-hover:text-neutral-700 transition-colors leading-tight">
                     Era Gadgets
+                  </span>
+                  <span className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider leading-none">
+                    Nigeria
                   </span>
                 </div>
               </button>
@@ -160,7 +167,12 @@ export const Navbar: React.FC = () => {
           <div className="fixed top-0 right-0 bottom-0 w-full max-w-xs bg-white shadow-2xl p-6 flex flex-col justify-between overflow-y-auto">
             <div>
               <div className="flex items-center justify-between pb-6 border-b border-neutral-100">
-                <span className="font-semibold text-lg text-neutral-950">Menu</span>
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full overflow-hidden bg-white border border-neutral-200 p-0.5 flex items-center justify-center shrink-0">
+                    <img src="/logo.png" alt="Era Gadgets" className="w-full h-full object-contain" />
+                  </div>
+                  <span className="font-bold text-base text-neutral-950">Era Gadgets</span>
+                </div>
                 <button
                   onClick={() => setMobileMenuOpen(false)}
                   className="p-2 text-neutral-500 hover:text-neutral-900"

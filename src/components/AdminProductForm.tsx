@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Product, ProductVariant, ColorOption, StorageOption, StoreSettings } from '../types';
 import { formatNaira } from '../lib/utils';
+import { api } from '../lib/api';
 import {
   ArrowLeft,
   Save,
@@ -19,7 +20,9 @@ import {
   Palette,
   ExternalLink,
   Eye,
-  RefreshCw
+  RefreshCw,
+  Download,
+  Link2
 } from 'lucide-react';
 
 interface AdminProductFormProps {
@@ -59,6 +62,14 @@ const CATEGORIES = [
 
 const BRANDS = ['Apple', 'Samsung', 'Google', 'Sony', 'Dell', 'HP', 'Microsoft', 'Asus', 'Other'];
 
+export const parseFlexiblePrice = (val: any): number => {
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  if (!val && val !== 0) return 0;
+  const cleaned = String(val).replace(/[^0-9.]/g, '');
+  const num = parseFloat(cleaned);
+  return isNaN(num) ? 0 : num;
+};
+
 export const AdminProductForm: React.FC<AdminProductFormProps> = ({
   initialProduct,
   isEditing,
@@ -88,7 +99,7 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
     if (initialProduct?.colorOptions && initialProduct.colorOptions.length > 0) {
       return initialProduct.colorOptions.map((c) => ({
         ...c,
-        image: c.image && !c.image.startsWith('/src/assets/images/') ? c.image : ''
+        image: c.image ? c.image : ''
       }));
     }
     if (initialProduct?.variants && initialProduct.variants.length > 0) {
@@ -99,7 +110,7 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
           map.set(v.color.name, {
             name: v.color.name,
             hex: v.color.hex,
-            image: colImg && !colImg.startsWith('/src/assets/images/') ? colImg : ''
+            image: colImg ? colImg : ''
           });
         }
       });
@@ -157,7 +168,7 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
   // General additional media gallery
   const [extraImages, setExtraImages] = useState<string[]>(() => {
     if (!initialProduct?.images) return [];
-    return initialProduct.images.filter((img) => !img.startsWith('/src/assets/images/'));
+    return initialProduct.images;
   });
   const [imageUrlInput, setImageUrlInput] = useState('');
 
@@ -166,10 +177,10 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
     if (initialProduct?.variants && initialProduct.variants.length > 0) {
       return initialProduct.variants.map((v) => ({
         ...v,
-        image: v.image && !v.image.startsWith('/src/assets/images/') ? v.image : '',
+        image: v.image ? v.image : '',
         color: {
           ...v.color,
-          image: v.color?.image && !v.color.image.startsWith('/src/assets/images/') ? v.color.image : ''
+          image: v.color?.image ? v.color.image : ''
         }
       }));
     }
@@ -202,10 +213,10 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
   // Active preview image changes dynamically when previewColorName changes!
   const activePreviewImage = useMemo(() => {
     const matchedColor = colorOptions.find((c) => c.name.toLowerCase() === previewColorName.toLowerCase());
-    if (matchedColor?.image && !matchedColor.image.startsWith('/src/assets/images/')) {
+    if (matchedColor?.image) {
       return matchedColor.image;
     }
-    if (extraImages.length > 0 && !extraImages[0].startsWith('/src/assets/images/')) {
+    if (extraImages.length > 0) {
       return extraImages[0];
     }
     return null;
@@ -477,11 +488,67 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
     e.target.value = '';
   };
 
+  const [isUploadingFromUrl, setIsUploadingFromUrl] = useState(false);
+  const [isUploadingColorUrl, setIsUploadingColorUrl] = useState<number | null>(null);
+
   const handleAddImageUrl = () => {
     if (!imageUrlInput.trim()) return;
     setExtraImages((prev) => [...prev, imageUrlInput.trim()]);
     setImageUrlInput('');
     setSuccessToast('Added image URL to gallery!');
+  };
+
+  const handleUploadImageFromUrl = async () => {
+    const raw = imageUrlInput.trim();
+    if (!raw) return;
+
+    if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
+      setExtraImages((prev) => [...prev, raw]);
+      setImageUrlInput('');
+      setSuccessToast('Added image to gallery!');
+      return;
+    }
+
+    setIsUploadingFromUrl(true);
+    try {
+      const cleanSlug = (name || 'product').toLowerCase().replace(/[^a-z0-9]/g, '_');
+      const permanentUrl = await api.uploadFromUrl(raw, `${cleanSlug}_gallery`);
+      setExtraImages((prev) => [...prev, permanentUrl]);
+      setImageUrlInput('');
+      setSuccessToast('✓ Image downloaded from URL and permanently saved to store cloud!');
+    } catch (err: any) {
+      console.warn('Upload from URL fallback:', err);
+      setExtraImages((prev) => [...prev, raw]);
+      setImageUrlInput('');
+      setSuccessToast('Direct image URL added to gallery.');
+    } finally {
+      setIsUploadingFromUrl(false);
+    }
+  };
+
+  const handleUploadColorFromUrl = async (index: number, url: string) => {
+    const raw = (url || '').trim();
+    if (!raw) return;
+
+    if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
+      handleUpdateColor(index, { image: raw });
+      return;
+    }
+
+    setIsUploadingColorUrl(index);
+    try {
+      const col = colorOptions[index];
+      const cleanSlug = `${name || 'product'}_${col?.name || 'color'}`.toLowerCase().replace(/[^a-z0-9]/g, '_');
+      const permanentUrl = await api.uploadFromUrl(raw, cleanSlug);
+      handleUpdateColor(index, { image: permanentUrl });
+      setSuccessToast(`✓ Uploaded photo for ${col?.name || 'color'} from URL to store cloud!`);
+    } catch (err: any) {
+      console.warn('Upload color from URL fallback:', err);
+      handleUpdateColor(index, { image: raw });
+      setSuccessToast(`Direct image URL set for ${colorOptions[index]?.name || 'color'}.`);
+    } finally {
+      setIsUploadingColorUrl(null);
+    }
   };
 
   const handleRemoveGalleryImage = (index: number) => {
@@ -502,11 +569,16 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
       return;
     }
 
-    if (storageOptions.length === 0) {
-      setErrorMsg('Please add at least one storage capacity with its preset price.');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
+    const effectiveStorageOptions =
+      storageOptions.length > 0
+        ? storageOptions
+        : [
+            {
+              capacity: 'Standard',
+              presetPrice: basePrice || 0,
+              compareAtPrice: compareAtPrice || null
+            }
+          ];
 
     if (colorOptions.length === 0) {
       setErrorMsg('Please add at least one color option.');
@@ -522,15 +594,15 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
       }
     });
 
-    // Collect all unique images from color options and gallery (filtering out any unwanted defaults)
+    // Collect all unique images from color options and gallery
     const gatheredImages: string[] = [];
     colorOptions.forEach((c) => {
-      if (c.image && c.image.trim() && !c.image.startsWith('/src/assets/images/') && !gatheredImages.includes(c.image.trim())) {
+      if (c.image && c.image.trim() && !gatheredImages.includes(c.image.trim())) {
         gatheredImages.push(c.image.trim());
       }
     });
     extraImages.forEach((img) => {
-      if (img && img.trim() && !img.startsWith('/src/assets/images/') && !gatheredImages.includes(img.trim())) {
+      if (img && img.trim() && !gatheredImages.includes(img.trim())) {
         gatheredImages.push(img.trim());
       }
     });
@@ -543,7 +615,7 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
         .toUpperCase()
         .replace(/[^A-Z0-9]/g, '')
         .slice(0, 6);
-      storageOptions.forEach((st) => {
+      effectiveStorageOptions.forEach((st) => {
         colorOptions.forEach((col) => {
           const colSlug = col.name.replace(/[^a-zA-Z0-9]/g, '').slice(0, 3).toUpperCase();
           const stSlug = st.capacity.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
@@ -571,9 +643,9 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
       condition,
       shortDescription: shortDescription.trim(),
       description: description.trim(),
-      basePrice: storageOptions[0].presetPrice,
-      compareAtPrice: storageOptions[0].compareAtPrice,
-      costPrice: costPrice ? Number(costPrice) : null,
+      basePrice: effectiveStorageOptions[0]?.presetPrice ?? (basePrice || 0),
+      compareAtPrice: effectiveStorageOptions[0]?.compareAtPrice ?? compareAtPrice ?? null,
+      costPrice: costPrice != null ? parseFlexiblePrice(costPrice) : null,
       badge,
       status,
       isSold,
@@ -581,7 +653,7 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
       images: gatheredImages,
       specs: specsMap,
       colorOptions,
-      storageOptions,
+      storageOptions: effectiveStorageOptions,
       variants: finalVariants
     };
 
@@ -980,6 +1052,78 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
                 </select>
               </div>
             </div>
+
+            {/* Quick Price Setup in Step 1 */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-neutral-100">
+              <div>
+                <label className="text-xs font-semibold text-neutral-700 block mb-1">
+                  Base Selling Price (₦) <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={basePrice === 0 ? '' : basePrice}
+                  onChange={(e) => {
+                    const parsed = parseFlexiblePrice(e.target.value);
+                    if (storageOptions.length > 0) {
+                      handleUpdateStorage(0, { presetPrice: parsed });
+                    } else {
+                      setStorageOptions([
+                        { capacity: 'Standard', presetPrice: parsed, compareAtPrice: null }
+                      ]);
+                    }
+                  }}
+                  placeholder="e.g. 2500000 or 1500"
+                  className="w-full p-2.5 border border-neutral-300 rounded-xl text-xs font-bold text-neutral-900 focus:outline-none focus:border-neutral-950 bg-white"
+                />
+                <span className="text-[11px] font-semibold text-emerald-600 block mt-1">
+                  {formatNaira(basePrice)}
+                </span>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-neutral-700 block mb-1">
+                  Compare-At Price (Optional)
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={compareAtPrice ?? ''}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    const parsed = raw.trim() ? parseFlexiblePrice(raw) : null;
+                    if (storageOptions.length > 0) {
+                      handleUpdateStorage(0, { compareAtPrice: parsed });
+                    }
+                  }}
+                  placeholder="e.g. 3000000"
+                  className="w-full p-2.5 border border-neutral-300 rounded-xl text-xs text-neutral-700 focus:outline-none focus:border-neutral-950 bg-white"
+                />
+                {compareAtPrice && compareAtPrice > basePrice && (
+                  <span className="text-[11px] text-neutral-400 block mt-1 line-through">
+                    {formatNaira(compareAtPrice)}
+                  </span>
+                )}
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-neutral-700 block mb-1">
+                  Cost Price (Optional)
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={costPrice ?? ''}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setCostPrice(raw.trim() ? parseFlexiblePrice(raw) : null);
+                  }}
+                  placeholder="e.g. 2100000"
+                  className="w-full p-2.5 border border-neutral-300 rounded-xl text-xs text-neutral-700 focus:outline-none focus:border-neutral-950 bg-white"
+                />
+                <p className="text-[10px] text-neutral-400 mt-1">Wholesale cost (admin only)</p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1139,13 +1283,31 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
                       )}
 
                       {/* Direct URL Input Toggle */}
-                      <input
-                        type="url"
-                        placeholder="Or paste image URL"
-                        value={col.image?.startsWith('http') ? col.image : ''}
-                        onChange={(e) => handleUpdateColor(index, { image: e.target.value })}
-                        className="p-1 border border-neutral-200 rounded-lg text-[11px] flex-1 min-w-[140px]"
-                      />
+                      <div className="flex items-center gap-1.5 flex-1 min-w-[220px]">
+                        <input
+                          type="url"
+                          placeholder="Paste image URL (https://...)"
+                          value={col.image || ''}
+                          onChange={(e) => handleUpdateColor(index, { image: e.target.value })}
+                          className="p-1.5 border border-neutral-200 rounded-lg text-[11px] flex-1 min-w-[130px] font-mono"
+                        />
+                        {(col.image?.startsWith('http://') || col.image?.startsWith('https://')) && (
+                          <button
+                            type="button"
+                            onClick={() => handleUploadColorFromUrl(index, col.image!)}
+                            disabled={isUploadingColorUrl === index}
+                            className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors whitespace-nowrap cursor-pointer shadow-2xs"
+                            title="Download and upload permanently to store cloud media"
+                          >
+                            {isUploadingColorUrl === index ? (
+                              <RefreshCw className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <Download className="w-3 h-3" />
+                            )}
+                            <span>{isUploadingColorUrl === index ? 'Saving...' : 'Upload URL'}</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1196,22 +1358,50 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
           </div>
 
           {/* Quick URL Input */}
-          <div className="flex items-center gap-2">
-            <input
-              type="url"
-              placeholder="Or paste an image URL (https://...)"
-              value={imageUrlInput}
-              onChange={(e) => setImageUrlInput(e.target.value)}
-              className="p-2 border border-neutral-200 rounded-xl text-xs flex-1 focus:outline-none focus:border-neutral-950"
-            />
-            <button
-              type="button"
-              onClick={handleAddImageUrl}
-              disabled={!imageUrlInput.trim()}
-              className="px-3 py-2 bg-neutral-100 hover:bg-neutral-200 disabled:opacity-50 text-neutral-800 rounded-xl text-xs font-semibold transition-colors"
-            >
-              Add URL
-            </button>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            <div className="relative flex-1">
+              <input
+                type="url"
+                placeholder="Paste an image URL (https://...)"
+                value={imageUrlInput}
+                onChange={(e) => setImageUrlInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleUploadImageFromUrl();
+                  }
+                }}
+                className="w-full p-2 pl-8 border border-neutral-200 rounded-xl text-xs focus:outline-none focus:border-neutral-950 font-mono"
+              />
+              <Link2 className="w-3.5 h-3.5 text-neutral-400 absolute left-2.5 top-2.5" />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleAddImageUrl}
+                disabled={!imageUrlInput.trim()}
+                className="px-3 py-2 bg-neutral-100 hover:bg-neutral-200 disabled:opacity-50 text-neutral-800 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+                title="Add as direct web link"
+              >
+                Add URL
+              </button>
+
+              <button
+                type="button"
+                onClick={handleUploadImageFromUrl}
+                disabled={!imageUrlInput.trim() || isUploadingFromUrl}
+                className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 shadow-2xs cursor-pointer whitespace-nowrap"
+                title="Download from URL and permanently upload to store cloud storage"
+              >
+                {isUploadingFromUrl ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Download className="w-3.5 h-3.5" />
+                )}
+                <span>{isUploadingFromUrl ? 'Uploading...' : 'Upload Image from URL'}</span>
+              </button>
+            </div>
           </div>
 
           {/* Uploaded Gallery Photos Grid */}
@@ -1336,13 +1526,13 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
                   </label>
                   <div className="relative">
                     <input
-                      type="number"
-                      step="5000"
-                      min="0"
-                      value={tier.presetPrice}
+                      type="text"
+                      inputMode="decimal"
+                      value={tier.presetPrice === 0 ? '' : tier.presetPrice}
                       onChange={(e) =>
-                        handleUpdateStorage(index, { presetPrice: Number(e.target.value) })
+                        handleUpdateStorage(index, { presetPrice: parseFlexiblePrice(e.target.value) })
                       }
+                      placeholder="e.g. 2500000 or 1500"
                       className="w-full p-2 border border-neutral-300 rounded-xl text-xs font-bold text-neutral-950 bg-white focus:outline-none focus:border-neutral-950 tabular-nums"
                     />
                     <span className="text-[11px] font-semibold text-emerald-600 block mt-1">
@@ -1357,13 +1547,12 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
                     Compare-At Price (Optional)
                   </label>
                   <input
-                    type="number"
-                    step="5000"
-                    min="0"
+                    type="text"
+                    inputMode="decimal"
                     value={tier.compareAtPrice ?? ''}
                     onChange={(e) =>
                       handleUpdateStorage(index, {
-                        compareAtPrice: e.target.value ? Number(e.target.value) : null
+                        compareAtPrice: e.target.value.trim() ? parseFlexiblePrice(e.target.value) : null
                       })
                     }
                     placeholder="e.g. 3100000"
@@ -1496,13 +1685,13 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
 
                       <td className="p-3 font-bold text-neutral-950 tabular-nums">
                         <input
-                          type="number"
-                          step="5000"
-                          value={v.price}
+                          type="text"
+                          inputMode="decimal"
+                          value={v.price === 0 ? '' : v.price}
                           onChange={(e) =>
-                            handleUpdateVariant(vIdx, 'price', Number(e.target.value))
+                            handleUpdateVariant(vIdx, 'price', parseFlexiblePrice(e.target.value))
                           }
-                          className="p-1 border border-neutral-200 rounded text-xs w-28 font-bold text-neutral-950 tabular-nums bg-white"
+                          className="p-1 border border-neutral-200 rounded text-xs w-28 font-bold text-neutral-950 tabular-nums bg-white focus:outline-none focus:border-neutral-950"
                         />
                       </td>
 

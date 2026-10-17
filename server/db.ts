@@ -1,31 +1,245 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import {
+import type {
   Product,
   Order,
   Review,
   StoreSettings,
+  HomePageConfig,
   CustomerCRM,
   Lead,
   AdminNotification,
-  PaymentAuditLog
-} from '../src/types';
+  PaymentAuditLog,
+  EmailLog,
+  EmailConfig,
+  PushSubscriptionRecord
+} from '../src/types.ts';
+import {
+  sendOrderNotificationEmail,
+  sendPaymentProofNotificationEmail,
+  sendLowStockNotificationEmail,
+  sendLeadNotificationEmail,
+  getAdminNotificationRecipients
+} from './mailer.ts';
+import { firestoreDb } from '../src/lib/firebase.ts';
+import {
+  collection,
+  doc,
+  getDocs,
+  getDoc,
+  setDoc,
+  deleteDoc,
+  onSnapshot
+} from 'firebase/firestore';
+import { INITIAL_CATALOG } from './initialCatalog.ts';
 
 const DATA_FILE = path.resolve(process.cwd(), 'store_data.json');
+
+const UPLOAD_DIRS = [
+  path.resolve(process.cwd(), 'public/uploads'),
+  path.resolve(process.cwd(), 'src/assets/uploads')
+];
+for (const dir of UPLOAD_DIRS) {
+  try {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  } catch (_) {}
+}
+
+export const DEFAULT_HOME_CONFIG: HomePageConfig = {
+  hero: {
+    showHero: true,
+    badge: 'Era Gadgets Flagship',
+    headline: 'The technology you actually want.',
+    subheadline: 'Discover iPhones, MacBooks, Samsung devices and premium gadgets — carefully selected and ready for you in Nigeria.',
+    primaryButtonText: 'Shop iPhone',
+    primaryButtonCategory: 'iPhone',
+    secondaryButtonText: 'Explore All Products',
+    secondaryButtonCategory: 'all',
+    heroImage: '/src/assets/images/hero_iphone_flagship_1790352890898.jpg',
+    heroImageAlt: 'Era Gadgets Flagship iPhone 17 Pro',
+    heroImageTag: 'Era Gadgets Flagship',
+    heroImageTitle: 'iPhone 17 Pro · Aerospace Titanium',
+    heroButtonText: 'Configure & Buy',
+    heroProductSlug: 'iphone-17-pro'
+  },
+  categoriesSection: {
+    showSection: true,
+    title: 'Curated Collections',
+    subtitle: 'Select a category to explore certified hardware.',
+    categories: [
+      {
+        id: 'cat-iphone',
+        name: 'iPhone',
+        tagline: 'Latest titanium flagships & certified pristine models',
+        image: '/src/assets/images/hero_iphone_flagship_1790352890898.jpg',
+        iconName: 'Smartphone',
+        enabled: true
+      },
+      {
+        id: 'cat-mac',
+        name: 'Mac',
+        tagline: 'MacBook Pro & MacBook Air with Apple M-Series silicon',
+        image: '/src/assets/images/showcase_macbook_pro_1790352903234.jpg',
+        iconName: 'Laptop',
+        enabled: true
+      },
+      {
+        id: 'cat-samsung',
+        name: 'Samsung',
+        tagline: 'Galaxy S-Series Ultra & revolutionary foldables',
+        image: '/src/assets/images/category_samsung_galaxy_1790352913709.jpg',
+        iconName: 'Smartphone',
+        enabled: true
+      },
+      {
+        id: 'cat-accessories',
+        name: 'Accessories',
+        tagline: 'AirPods Max, MagSafe power, and studio sound',
+        image: '/src/assets/images/accessories_airpods_gadgets_1790352927938.jpg',
+        iconName: 'Headphones',
+        enabled: true
+      }
+    ]
+  },
+  showcase1: {
+    showShowcase: true,
+    badge: 'Featured Device',
+    stockStatus: 'In Stock (VI Showroom)',
+    productSlug: 'iphone-17-pro',
+    titleOverride: '',
+    descriptionOverride: '',
+    imageOverride: '',
+    buyButtonText: 'Buy Now',
+    detailsButtonText: 'View Details'
+  },
+  showcase2: {
+    showShowcase: true,
+    badge: 'Pro Workstation',
+    headline: 'MacBook Pro. M4 Max powerhouse.',
+    description: 'Built for Nigerian software engineers, 3D artists, film colorists, and power users. Liquid Retina XDR screen, all-day 24-hour battery life, and up to 546GB/s memory bandwidth.',
+    image: '/src/assets/images/showcase_macbook_pro_1790352903234.jpg',
+    stat1Label: 'Peak Brightness',
+    stat1Value: '1,600 nits',
+    stat2Label: 'Battery Life',
+    stat2Value: '24 Hours',
+    stat3Label: 'Starting Price',
+    stat3Value: '₦3,850,000',
+    primaryButtonText: 'Configure M4 Max',
+    primaryButtonSlug: 'macbook-pro-16-m4-max',
+    secondaryButtonText: 'Explore Mac Lineup',
+    secondaryButtonCategory: 'Mac'
+  },
+  bestSellers: {
+    showSection: true,
+    title: 'Popular in Nigeria',
+    subtitle: 'Top requested phones and gadgets ready for dispatch today.',
+    limit: 4
+  },
+  showcase3: {
+    showShowcase: true,
+    badge: 'Android Mastery',
+    headline: 'Galaxy S25 Ultra. Titanium perfection.',
+    description: 'Armed with the 200MP Quad Telephoto sensor, anti-reflective Gorilla Armor glass, Snapdragon 8 Elite, and integrated Bluetooth S Pen. Genuine dual-SIM Nigerian-network verified.',
+    image: '/src/assets/images/category_samsung_galaxy_1790352913709.jpg',
+    pricePrefix: 'Starting from',
+    priceValue: '₦2,350,000',
+    primaryButtonText: 'View Galaxy S25 Ultra',
+    primaryButtonSlug: 'samsung-galaxy-s25-ultra',
+    secondaryButtonText: 'All Samsung Phones',
+    secondaryButtonCategory: 'Samsung'
+  },
+  trust: {
+    showSection: true,
+    title: 'Why shop with Era Gadgets?',
+    subtitle: 'Buying high-end electronics in Nigeria should be transparent, safe, and effortless.',
+    pillars: [
+      {
+        id: 'trust-1',
+        icon: 'CheckCircle2',
+        title: '100% Genuine & Verified',
+        description: 'Every unit comes with verifiable serial numbers directly checked against Apple or Samsung servers. No refurbished parts disguised as new, no clone screens.'
+      },
+      {
+        id: 'trust-2',
+        icon: 'Shield',
+        title: 'Transparent Fixed Pricing',
+        description: 'No daily price hikes or chaotic computer village bargaining. What you see on Era Gadgets is the exact price, inclusive of clear invoice documentation.'
+      },
+      {
+        id: 'trust-3',
+        icon: 'Truck',
+        title: 'Fast Insured Delivery',
+        description: 'Express same-day courier dispatch in Lagos, and priority tracked air express to Abuja, Port Harcourt, Kano, and across Nigeria with door-to-door transit protection.'
+      }
+    ]
+  },
+  faq: {
+    showSection: true,
+    title: 'Frequently Asked Questions',
+    subtitle: 'Everything you need to know about purchasing with Era Gadgets.',
+    items: [
+      {
+        id: 'faq-1',
+        q: 'Are your devices genuinely original and authentic?',
+        a: 'Yes, without exception. Every Brand New unit is 100% factory sealed with valid manufacturer serial numbers and original warranties. Our UK/US used devices undergo a rigorous 36-point diagnostic inspection verifying genuine OLED screens, True Tone, Face ID/Touch ID, and pristine original battery health.'
+      },
+      {
+        id: 'faq-2',
+        q: 'How fast is delivery across Lagos and other Nigerian states?',
+        a: 'Orders within Lagos are dispatched same-day with delivery completed in 2 to 4 hours. Orders to Abuja, Port Harcourt, Ibadan, and other states are shipped via priority courier services (DHL / GIG Logistics) with tracking delivered within 24 to 48 hours.'
+      },
+      {
+        id: 'faq-3',
+        q: 'What payment options do you accept?',
+        a: 'We support secure online payments via Paystack and Flutterwave (debit cards, USSD, Apple Pay where available), direct bank transfers to our verified corporate bank accounts, and in-person card payments at our Victoria Island showroom.'
+      },
+      {
+        id: 'faq-4',
+        q: 'Can I physically inspect a device before taking delivery?',
+        a: 'Absolutely. Customers are always welcome at our Victoria Island showroom in Lagos to inspect devices, test Face ID, cameras, and displays in person before completing purchase.'
+      },
+      {
+        id: 'faq-5',
+        q: 'What is your warranty policy?',
+        a: 'Brand New devices include the full 1-Year official manufacturer warranty (Apple Care / Samsung Care). UK Used devices sold by Era Gadgets include a 90-day diagnostic replacement guarantee against technical defects.'
+      }
+    ]
+  },
+  newsletter: {
+    showSection: true,
+    headline: 'Be first to know when new shipments arrive.',
+    subheadline: 'Get instant private alerts on newly cleared iPhone batches, MacBook M4 restocks, and exclusive deals.',
+    buttonText: 'Join VIP Drops',
+    placeholderText: 'Enter your email address'
+  }
+};
 
 const DEFAULT_SETTINGS: StoreSettings = {
   brandName: 'Era Gadgets',
   tagline: 'The technology you actually want.',
-  phone: '+234 814 555 0192',
-  whatsappNumber: '2348145550192',
+  phone: '+234 903 642 2181',
+  whatsappNumber: '2349036422181',
   email: 'concierge@eragadgets.ng',
+  orderNotificationEmail: 'iwuajokuchidera64@gmail.com',
+  emailConfig: {
+    orderNotificationEmail: 'iwuajokuchidera64@gmail.com',
+    enabled: true,
+    fromName: 'Era Gadgets Orders',
+    fromEmail: 'orders@eragadgets.ng',
+    smtpHost: process.env.SMTP_HOST || '',
+    smtpPort: Number(process.env.SMTP_PORT) || 587,
+    smtpUser: process.env.SMTP_USER || '',
+    smtpPass: process.env.SMTP_PASS || '',
+    smtpSecure: false
+  },
   address: 'Victoria Island Flagship Showroom, Lagos, Nigeria',
   openingHours: 'Mon – Sat: 9:00 AM – 7:30 PM WAT',
   currency: 'NGN',
   currencySymbol: '₦',
-  lagosDeliveryFee: 3500,
-  outsideLagosDeliveryFee: 8500,
+  deliveryFee: 5000,
+  lagosDeliveryFee: 5000,
+  outsideLagosDeliveryFee: 5000,
   pickupFee: 0,
   freeDeliveryThreshold: 3500000,
   showSoldProductsOnWebsite: true,
@@ -34,18 +248,19 @@ const DEFAULT_SETTINGS: StoreSettings = {
   invoicePrefix: 'INV-EG-',
   orderPrefix: 'EG-2026-',
   reservationMinutes: 60,
+  homeConfig: DEFAULT_HOME_CONFIG,
   paymentMethods: {
     bankTransfer: {
       enabled: true,
-      bankName: 'Guaranty Trust Bank (GTBank)',
-      accountName: 'Era Gadgets Limited',
-      accountNumber: '0123456789',
-      sortCode: '058152062',
-      instructions: 'Please transfer the exact amount shown to the account above. Use your order reference or full name as narration.',
+      bankName: 'Kuda MFB',
+      accountName: 'Chidera Kelvin',
+      accountNumber: '2064248680',
+      sortCode: '',
+      instructions: 'Please transfer the exact amount shown to the Kuda MFB account above. Use your order number as reference.',
       notes: 'Payment verification takes 5 to 15 minutes during showroom operating hours.'
     },
     paystack: {
-      enabled: true,
+      enabled: false,
       publicKey: 'pk_test_eragadgets_live_prep',
       secretKey: 'sk_test_eragadgets_secret_key'
     },
@@ -58,12 +273,12 @@ const DEFAULT_SETTINGS: StoreSettings = {
       notes: 'Available for verified repeat corporate clients within Victoria Island & Ikoyi only.'
     },
     payAtPickup: {
-      enabled: true,
-      notes: 'Inspect and test your gadget at our Victoria Island showroom before completing card or POS payment.'
+      enabled: false,
+      notes: 'Inspect and test your gadget at our Victoria Island showroom before completing payment.'
     }
   },
   whatsappConfig: {
-    ownerWhatsApp: '2348145550192',
+    ownerWhatsApp: '2349036422181',
     provider: 'link_fallback',
     autoNotifyOwnerOnOrder: true,
     autoNotifyCustomerOnStatus: true,
@@ -103,32 +318,97 @@ interface DatabaseSchema {
   notifications: AdminNotification[];
   invoiceCounter: number;
   orderCounter: number;
+  media?: Record<string, string>;
+  emailLogs?: EmailLog[];
+  pushSubscriptions?: PushSubscriptionRecord[];
 }
 
 class StoreDB {
   private data: DatabaseSchema;
+  private lastMtimeMs: number = 0;
+  private firestoreInitialized = false;
 
   constructor() {
     this.data = this.loadData();
+    // Connect and synchronize with persistent cloud Firestore
+    this.initFirestoreSync().catch((err) => {
+      console.warn('[StoreDB] Firestore initial sync notice:', err?.message || err);
+    });
+  }
+
+  private ensureFreshData() {
+    try {
+      if (fs.existsSync(DATA_FILE)) {
+        const stat = fs.statSync(DATA_FILE);
+        if (stat.mtimeMs > this.lastMtimeMs) {
+          const freshData = this.loadData();
+          if (freshData) {
+            this.data = freshData;
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[StoreDB] Error verifying data freshness:', err);
+    }
   }
 
   private loadData(): DatabaseSchema {
     try {
       if (fs.existsSync(DATA_FILE)) {
+        const stat = fs.statSync(DATA_FILE);
+        this.lastMtimeMs = stat.mtimeMs;
         const fileContent = fs.readFileSync(DATA_FILE, 'utf-8');
         const parsed = JSON.parse(fileContent);
-        return {
+        const loadedSchema: DatabaseSchema = {
           products: (parsed.products || []).map((p: Product) => ({
             ...p,
-            images: Array.isArray(p.images)
-              ? p.images.filter((img: string) => !img.startsWith('/src/assets/images/'))
-              : []
+            images: Array.isArray(p.images) ? p.images : []
           })),
           orders: parsed.orders || [],
           reviews: parsed.reviews || [],
           settings: {
             ...DEFAULT_SETTINGS,
             ...(parsed.settings || {}),
+            homeConfig: {
+              ...DEFAULT_HOME_CONFIG,
+              ...(parsed.settings?.homeConfig || {}),
+              hero: {
+                ...DEFAULT_HOME_CONFIG.hero,
+                ...(parsed.settings?.homeConfig?.hero || {})
+              },
+              categoriesSection: {
+                ...DEFAULT_HOME_CONFIG.categoriesSection,
+                ...(parsed.settings?.homeConfig?.categoriesSection || {})
+              },
+              showcase1: {
+                ...DEFAULT_HOME_CONFIG.showcase1,
+                ...(parsed.settings?.homeConfig?.showcase1 || {})
+              },
+              showcase2: {
+                ...DEFAULT_HOME_CONFIG.showcase2,
+                ...(parsed.settings?.homeConfig?.showcase2 || {})
+              },
+              bestSellers: {
+                ...DEFAULT_HOME_CONFIG.bestSellers,
+                ...(parsed.settings?.homeConfig?.bestSellers || {})
+              },
+              showcase3: {
+                ...DEFAULT_HOME_CONFIG.showcase3,
+                ...(parsed.settings?.homeConfig?.showcase3 || {})
+              },
+              trust: {
+                ...DEFAULT_HOME_CONFIG.trust,
+                ...(parsed.settings?.homeConfig?.trust || {})
+              },
+              faq: {
+                ...DEFAULT_HOME_CONFIG.faq,
+                ...(parsed.settings?.homeConfig?.faq || {})
+              },
+              newsletter: {
+                ...DEFAULT_HOME_CONFIG.newsletter,
+                ...(parsed.settings?.homeConfig?.newsletter || {})
+              }
+            },
             paymentMethods: {
               ...DEFAULT_SETTINGS.paymentMethods,
               ...(parsed.settings?.paymentMethods || {})
@@ -136,17 +416,47 @@ class StoreDB {
             whatsappConfig: {
               ...DEFAULT_SETTINGS.whatsappConfig,
               ...(parsed.settings?.whatsappConfig || {})
-            }
+            },
+            emailConfig: {
+              ...DEFAULT_SETTINGS.emailConfig,
+              ...(parsed.settings?.emailConfig || {}),
+              orderNotificationEmail:
+                parsed.settings?.orderNotificationEmail ||
+                parsed.settings?.emailConfig?.orderNotificationEmail ||
+                DEFAULT_SETTINGS.orderNotificationEmail ||
+                'iwuajokuchidera64@gmail.com'
+            },
+            orderNotificationEmail:
+              parsed.settings?.orderNotificationEmail ||
+              parsed.settings?.emailConfig?.orderNotificationEmail ||
+              DEFAULT_SETTINGS.orderNotificationEmail ||
+              'iwuajokuchidera64@gmail.com'
           },
           customers: parsed.customers || [],
           leads: parsed.leads || [],
           notifications: parsed.notifications || [],
           invoiceCounter: parsed.invoiceCounter || 100,
-          orderCounter: parsed.orderCounter || 184
+          orderCounter: parsed.orderCounter || 184,
+          media: parsed.media || {},
+          emailLogs: parsed.emailLogs || [],
+          pushSubscriptions: parsed.pushSubscriptions || []
         };
+
+        if (!parsed.settings?.homeConfig) {
+          try {
+            fs.writeFileSync(DATA_FILE, JSON.stringify(loadedSchema, null, 2), 'utf-8');
+            const newStat = fs.statSync(DATA_FILE);
+            this.lastMtimeMs = newStat.mtimeMs;
+          } catch (writeErr) {
+            console.warn('[StoreDB] Note: could not write initial homeConfig to disk:', writeErr);
+          }
+        }
+
+        return loadedSchema;
       }
     } catch (err) {
-      console.error('Failed to load store_data.json, initializing defaults:', err);
+      console.error('Failed to load store_data.json, keeping current/defaults:', err);
+      if (this.data) return this.data;
     }
 
     const initial: DatabaseSchema = {
@@ -167,6 +477,10 @@ class StoreDB {
   private saveData(dataToSave: DatabaseSchema) {
     try {
       fs.writeFileSync(DATA_FILE, JSON.stringify(dataToSave, null, 2), 'utf-8');
+      if (fs.existsSync(DATA_FILE)) {
+        const stat = fs.statSync(DATA_FILE);
+        this.lastMtimeMs = stat.mtimeMs;
+      }
     } catch (err) {
       console.error('Failed to write store_data.json:', err);
     }
@@ -174,6 +488,216 @@ class StoreDB {
 
   private commit() {
     this.saveData(this.data);
+  }
+
+  private sanitize(obj: any): any {
+    return JSON.parse(
+      JSON.stringify(obj, (_k, v) => (v === undefined ? null : v))
+    );
+  }
+
+  public processProductImages(images: string[], slugPrefix: string): string[] {
+    if (!Array.isArray(images)) return [];
+    return images.map((img, idx) => {
+      if (typeof img === 'string' && img.startsWith('data:image/')) {
+        try {
+          const match = img.match(/^data:image\/([a-zA-Z0-9\+\-]+);base64,(.+)$/);
+          if (match) {
+            let ext = match[1].toLowerCase();
+            if (ext === 'jpeg') ext = 'jpg';
+            if (ext === 'svg+xml') ext = 'svg';
+            const filename = `prod_${slugPrefix}_${idx}_${Date.now()}.${ext}`;
+            const buffer = Buffer.from(match[2], 'base64');
+            const targetDir = path.resolve(process.cwd(), 'public/uploads');
+            if (!fs.existsSync(targetDir)) {
+              fs.mkdirSync(targetDir, { recursive: true });
+            }
+            fs.writeFileSync(path.join(targetDir, filename), buffer);
+            return `/uploads/${filename}`;
+          }
+        } catch (err) {
+          console.warn('[StoreDB] Could not extract base64 image:', err);
+        }
+      }
+      return img;
+    });
+  }
+
+  private async initFirestoreSync() {
+    try {
+      console.log('[StoreDB] Connecting to persistent cloud Firestore database...');
+      const productsRef = collection(firestoreDb, 'products');
+      const snap = await getDocs(productsRef);
+
+      if (snap.size > 0) {
+        console.log(`[StoreDB] Loaded ${snap.size} products from persistent cloud Firestore.`);
+        const firestoreProducts: Product[] = [];
+        snap.forEach((d) => {
+          firestoreProducts.push(d.data() as Product);
+        });
+
+        // Merge any products present in local database not yet saved to cloud Firestore
+        const cloudIds = new Set(firestoreProducts.map((p) => p.id));
+        for (const localP of this.data.products) {
+          if (!cloudIds.has(localP.id)) {
+            firestoreProducts.push(localP);
+            this.saveProductToFirestore(localP).catch((err) => {
+              console.warn(`[StoreDB] Notice syncing local product ${localP.id} to Firestore:`, err?.message);
+            });
+          }
+        }
+
+        this.data.products = firestoreProducts;
+        this.commit();
+      } else {
+        console.log('[StoreDB] Cloud Firestore catalog is empty. Seeding certified catalogue to cloud...');
+        if (!this.data.products || this.data.products.length < 2) {
+          this.data.products = [...INITIAL_CATALOG];
+          this.commit();
+        }
+        for (const p of this.data.products) {
+          await this.saveProductToFirestore(p);
+        }
+        console.log(`[StoreDB] Successfully seeded ${this.data.products.length} products to cloud Firestore.`);
+      }
+
+      // Sync settings with Firestore
+      try {
+        const settingsDoc = await getDoc(doc(firestoreDb, 'settings', 'store_settings'));
+        if (settingsDoc.exists()) {
+          const cloudSettings = settingsDoc.data() as StoreSettings;
+          const cloudTime = new Date((cloudSettings as any).updatedAt || 0).getTime();
+          const localTime = new Date((this.data.settings as any).updatedAt || 0).getTime();
+
+          // Only overwrite local settings if cloud settings are strictly newer
+          if (cloudTime > localTime) {
+            this.data.settings = {
+              ...this.data.settings,
+              ...cloudSettings,
+              homeConfig: {
+                ...(this.data.settings.homeConfig || DEFAULT_HOME_CONFIG),
+                ...(cloudSettings.homeConfig || {}),
+                hero: {
+                  ...(this.data.settings.homeConfig?.hero || DEFAULT_HOME_CONFIG.hero),
+                  ...(cloudSettings.homeConfig?.hero || {})
+                },
+                categoriesSection: {
+                  ...(this.data.settings.homeConfig?.categoriesSection || DEFAULT_HOME_CONFIG.categoriesSection),
+                  ...(cloudSettings.homeConfig?.categoriesSection || {})
+                },
+                showcase1: {
+                  ...(this.data.settings.homeConfig?.showcase1 || DEFAULT_HOME_CONFIG.showcase1),
+                  ...(cloudSettings.homeConfig?.showcase1 || {})
+                },
+                showcase2: {
+                  ...(this.data.settings.homeConfig?.showcase2 || DEFAULT_HOME_CONFIG.showcase2),
+                  ...(cloudSettings.homeConfig?.showcase2 || {})
+                },
+                bestSellers: {
+                  ...(this.data.settings.homeConfig?.bestSellers || DEFAULT_HOME_CONFIG.bestSellers),
+                  ...(cloudSettings.homeConfig?.bestSellers || {})
+                },
+                showcase3: {
+                  ...(this.data.settings.homeConfig?.showcase3 || DEFAULT_HOME_CONFIG.showcase3),
+                  ...(cloudSettings.homeConfig?.showcase3 || {})
+                }
+              }
+            };
+            this.commit();
+          } else {
+            // Local is newer or equal: persist local settings up to Firestore
+            await this.saveSettingsToFirestore();
+          }
+        } else {
+          await this.saveSettingsToFirestore();
+        }
+      } catch (settingsErr: any) {
+        console.warn('[StoreDB] Settings cloud sync notice:', settingsErr.message);
+      }
+
+      // Sync orders with Firestore
+      try {
+        const ordersRef = collection(firestoreDb, 'orders');
+        const ordersSnap = await getDocs(ordersRef);
+        if (ordersSnap.size > 0) {
+          const cloudOrders: Order[] = [];
+          ordersSnap.forEach((d) => cloudOrders.push(d.data() as Order));
+          this.data.orders = cloudOrders;
+          this.commit();
+        }
+      } catch (ordersErr: any) {
+        console.warn('[StoreDB] Orders cloud sync notice:', ordersErr.message);
+      }
+
+      // Ensure media on disk is synchronized from local media store
+      try {
+        if (!this.data.media) this.data.media = {};
+        const mediaStorage = this.data.media;
+        const uploadDir = path.resolve(process.cwd(), 'public/uploads');
+        if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+        for (const [filename, dataUrl] of Object.entries(mediaStorage)) {
+          if (filename && dataUrl) {
+            const targetPath = path.join(uploadDir, filename);
+            if (!fs.existsSync(targetPath)) {
+              const match = dataUrl.match(/^data:image\/([a-zA-Z0-9\+\-]+);base64,(.+)$/);
+              if (match) {
+                fs.writeFileSync(targetPath, Buffer.from(match[2], 'base64'));
+              }
+            }
+          }
+        }
+      } catch (mediaErr: any) {
+        console.warn('[StoreDB] Media cache sync notice:', mediaErr.message);
+      }
+
+      // Listen for real-time changes to products from cloud
+      onSnapshot(productsRef, (snapshot) => {
+        if (!snapshot.empty) {
+          const updated: Product[] = [];
+          snapshot.forEach((d) => updated.push(d.data() as Product));
+          this.data.products = updated;
+          this.commit();
+        }
+      });
+
+      this.firestoreInitialized = true;
+      console.log('[StoreDB] Cloud Firestore persistent sync established successfully.');
+    } catch (err: any) {
+      console.warn('[StoreDB] Cloud Firestore sync fallback:', err?.message || err);
+    }
+  }
+
+  public async saveProductToFirestore(p: Product) {
+    try {
+      await setDoc(doc(firestoreDb, 'products', p.id), this.sanitize(p));
+    } catch (err: any) {
+      console.warn(`[StoreDB] Failed to persist product ${p.id} to Firestore:`, err.message);
+    }
+  }
+
+  public async deleteProductFromFirestore(id: string) {
+    try {
+      await deleteDoc(doc(firestoreDb, 'products', id));
+    } catch (err: any) {
+      console.warn(`[StoreDB] Failed to delete product ${id} from Firestore:`, err.message);
+    }
+  }
+
+  public async saveSettingsToFirestore() {
+    try {
+      await setDoc(doc(firestoreDb, 'settings', 'store_settings'), this.sanitize(this.data.settings));
+    } catch (err: any) {
+      console.warn('[StoreDB] Failed to persist settings to Firestore:', err.message);
+    }
+  }
+
+  public async saveOrderToFirestore(order: Order) {
+    try {
+      await setDoc(doc(firestoreDb, 'orders', order.id), this.sanitize(order));
+    } catch (err: any) {
+      console.warn(`[StoreDB] Failed to persist order ${order.id} to Firestore:`, err.message);
+    }
   }
 
   // --- PRODUCTS ---
@@ -186,6 +710,7 @@ class StoreDB {
     includeSoldOut?: boolean;
     featured?: boolean;
   }): Product[] {
+    this.ensureFreshData();
     let list = [...this.data.products];
 
     if (!options?.status) {
@@ -236,10 +761,30 @@ class StoreDB {
   }
 
   getProductByIdOrSlug(idOrSlug: string): Product | undefined {
-    return this.data.products.find((p) => p.id === idOrSlug || p.slug === idOrSlug);
+    this.ensureFreshData();
+    const raw = String(idOrSlug || '').trim();
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw).trim();
+    } catch (_) {}
+    const lowerRaw = raw.toLowerCase();
+    const lowerDecoded = decoded.toLowerCase();
+
+    return this.data.products.find(
+      (p) =>
+        p.id === raw ||
+        p.slug === raw ||
+        p.id === decoded ||
+        p.slug === decoded ||
+        (p.id && p.id.toLowerCase() === lowerRaw) ||
+        (p.slug && p.slug.toLowerCase() === lowerRaw) ||
+        (p.id && p.id.toLowerCase() === lowerDecoded) ||
+        (p.slug && p.slug.toLowerCase() === lowerDecoded)
+    );
   }
 
   createProduct(productData: Partial<Product>): Product {
+    this.ensureFreshData();
     const slug = (productData.name || 'product')
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
@@ -265,7 +810,7 @@ class StoreDB {
       featured: Boolean(productData.featured),
       images:
         productData.images && productData.images.length > 0
-          ? productData.images.filter((img) => !img.startsWith('/src/assets/images/'))
+          ? productData.images
           : [],
       specs: productData.specs || {},
       colorOptions: productData.colorOptions || [],
@@ -289,13 +834,34 @@ class StoreDB {
       updatedAt: new Date().toISOString()
     };
 
+    newProduct.images = this.processProductImages(newProduct.images, uniqueSlug);
     this.data.products.unshift(newProduct);
     this.commit();
+    this.saveProductToFirestore(newProduct);
     return newProduct;
   }
 
   updateProduct(id: string, updates: Partial<Product>): Product | null {
-    const index = this.data.products.findIndex((p) => p.id === id || p.slug === id);
+    this.ensureFreshData();
+    const raw = String(id || '').trim();
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw).trim();
+    } catch (_) {}
+    const lowerRaw = raw.toLowerCase();
+    const lowerDecoded = decoded.toLowerCase();
+
+    const index = this.data.products.findIndex(
+      (p) =>
+        p.id === raw ||
+        p.slug === raw ||
+        p.id === decoded ||
+        p.slug === decoded ||
+        (p.id && p.id.toLowerCase() === lowerRaw) ||
+        (p.slug && p.slug.toLowerCase() === lowerRaw) ||
+        (p.id && p.id.toLowerCase() === lowerDecoded) ||
+        (p.slug && p.slug.toLowerCase() === lowerDecoded)
+    );
     if (index === -1) return null;
 
     const existing = this.data.products[index];
@@ -304,6 +870,10 @@ class StoreDB {
       ...updates,
       updatedAt: new Date().toISOString()
     };
+
+    if (updates.images) {
+      updated.images = this.processProductImages(updated.images, updated.slug);
+    }
 
     if (updated.variants && updated.variants.length > 0) {
       const activeVariant =
@@ -319,10 +889,12 @@ class StoreDB {
 
     this.data.products[index] = updated;
     this.commit();
+    this.saveProductToFirestore(updated);
     return updated;
   }
 
   duplicateProduct(id: string): Product | null {
+    this.ensureFreshData();
     const original = this.getProductByIdOrSlug(id);
     if (!original) return null;
 
@@ -348,10 +920,12 @@ class StoreDB {
 
     this.data.products.unshift(duplicated);
     this.commit();
+    this.saveProductToFirestore(duplicated);
     return duplicated;
   }
 
   toggleProductSold(id: string, isSold?: boolean): Product | null {
+    this.ensureFreshData();
     const product = this.getProductByIdOrSlug(id);
     if (!product) return null;
 
@@ -365,16 +939,31 @@ class StoreDB {
     product.updatedAt = new Date().toISOString();
 
     this.commit();
+    this.saveProductToFirestore(product);
     return product;
   }
 
   deleteProduct(idOrSlugOrName: string): boolean {
+    this.ensureFreshData();
     if (!idOrSlugOrName) return false;
     const rawInput = String(idOrSlugOrName).trim();
     let clean = rawInput.toLowerCase();
     try {
       clean = decodeURIComponent(rawInput).trim().toLowerCase();
     } catch (_) {}
+
+    const matched = this.data.products.find((p) => {
+      const pId = (p.id || '').trim().toLowerCase();
+      const pSlug = (p.slug || '').trim().toLowerCase();
+      const pName = (p.name || '').trim().toLowerCase();
+      return (
+        p.id === rawInput ||
+        p.slug === rawInput ||
+        pId === clean ||
+        pSlug === clean ||
+        pName === clean
+      );
+    });
 
     const initialLen = this.data.products.length;
     this.data.products = this.data.products.filter((p) => {
@@ -394,6 +983,9 @@ class StoreDB {
 
     if (this.data.products.length !== initialLen) {
       this.commit();
+      if (matched) {
+        this.deleteProductFromFirestore(matched.id);
+      }
       console.log(`[StoreDB] Product deleted: "${rawInput}". Total remaining products: ${this.data.products.length}`);
       return true;
     }
@@ -413,6 +1005,7 @@ class StoreDB {
 
   // --- ORDERS, INVOICES & PAYMENTS ---
   getOrders(searchQuery?: string): Order[] {
+    this.ensureFreshData();
     let list = [...this.data.orders];
     if (searchQuery) {
       const q = searchQuery.toLowerCase().trim();
@@ -432,6 +1025,7 @@ class StoreDB {
   }
 
   getOrderById(idOrOrderNum: string): Order | undefined {
+    this.ensureFreshData();
     return this.data.orders.find(
       (o) =>
         o.id === idOrOrderNum ||
@@ -441,10 +1035,12 @@ class StoreDB {
   }
 
   getOrderByAccessToken(accessToken: string): Order | undefined {
+    this.ensureFreshData();
     return this.data.orders.find((o) => o.accessToken === accessToken);
   }
 
   createOrder(orderData: Partial<Order>): Order {
+    this.ensureFreshData();
     const prefix = this.data.settings.orderPrefix || 'EG-2026-';
     this.data.orderCounter = (this.data.orderCounter || 184) + 1;
     const orderNumber = `${prefix}${String(this.data.orderCounter).padStart(6, '0')}`;
@@ -511,7 +1107,35 @@ class StoreDB {
     });
 
     this.commit();
+    this.saveOrderToFirestore(newOrder);
+
+    // Asynchronously dispatch Email Notification with full order details to receiver
+    sendOrderNotificationEmail(newOrder, this.data.settings)
+      .then((mailRes) => {
+        if (mailRes.log) {
+          this.addEmailLog(mailRes.log);
+        }
+      })
+      .catch((mailErr) => {
+        console.error('[DB] Failed to process order notification email:', mailErr);
+      });
+
     return newOrder;
+  }
+
+  addEmailLog(log: EmailLog) {
+    this.ensureFreshData();
+    if (!this.data.emailLogs) this.data.emailLogs = [];
+    this.data.emailLogs.unshift(log);
+    if (this.data.emailLogs.length > 100) {
+      this.data.emailLogs = this.data.emailLogs.slice(0, 100);
+    }
+    this.commit();
+  }
+
+  getEmailLogs(): EmailLog[] {
+    this.ensureFreshData();
+    return this.data.emailLogs || [];
   }
 
   // Customer claims payment has been made (e.g. clicked "I've Made the Transfer")
@@ -519,6 +1143,7 @@ class StoreDB {
     orderIdOrNumber: string,
     proofData?: { dataUrl?: string; fileName?: string }
   ): Order | null {
+    this.ensureFreshData();
     const order = this.data.orders.find(
       (o) => o.id === orderIdOrNumber || o.orderNumber === orderIdOrNumber
     );
@@ -554,6 +1179,13 @@ class StoreDB {
       orderId: order.id
     });
 
+    // Alert all admins with access to admin panel via email
+    sendPaymentProofNotificationEmail(order, this.data.settings, proofData?.fileName)
+      .then((res) => {
+        if (res.log) this.addEmailLog(res.log);
+      })
+      .catch((err) => console.error('[DB] Failed to process payment proof email alert:', err));
+
     this.commit();
     return order;
   }
@@ -563,6 +1195,7 @@ class StoreDB {
     orderIdOrNumber: string,
     adminEmail: string
   ): { success: boolean; order?: Order; message?: string } {
+    this.ensureFreshData();
     const order = this.data.orders.find(
       (o) => o.id === orderIdOrNumber || o.orderNumber === orderIdOrNumber
     );
@@ -595,12 +1228,18 @@ class StoreDB {
                 title: `Variant Sold Out: ${prod.name}`,
                 message: `${variant.storage} ${variant.color.name} of ${prod.name} has reached 0 stock.`
               });
+              sendLowStockNotificationEmail(prod.name, `${variant.storage || ''} ${variant.color.name}`.trim(), 0, this.data.settings)
+                .then((r) => r.log && this.addEmailLog(r.log))
+                .catch((e) => console.error('[DB] Failed sold out email alert:', e));
             } else if (variant.stock <= variant.lowStockThreshold) {
               this.addNotification({
                 type: 'low_stock',
                 title: `Low Stock: ${prod.name}`,
                 message: `Only ${variant.stock} units remaining for ${variant.storage} ${variant.color.name}.`
               });
+              sendLowStockNotificationEmail(prod.name, `${variant.storage || ''} ${variant.color.name}`.trim(), variant.stock, this.data.settings)
+                .then((r) => r.log && this.addEmailLog(r.log))
+                .catch((e) => console.error('[DB] Failed low stock email alert:', e));
             }
           }
           // Check if all variants are sold out
@@ -642,6 +1281,7 @@ class StoreDB {
     paymentStatus?: Order['paymentStatus'],
     adminNote?: string
   ): Order | null {
+    this.ensureFreshData();
     const order = this.data.orders.find((o) => o.id === orderId || o.orderNumber === orderId);
     if (!order) return null;
 
@@ -671,6 +1311,7 @@ class StoreDB {
 
   // --- CUSTOMER CRM ---
   getCustomers(searchQuery?: string): CustomerCRM[] {
+    this.ensureFreshData();
     let list = [...this.data.customers];
     if (searchQuery) {
       const q = searchQuery.toLowerCase().trim();
@@ -686,10 +1327,12 @@ class StoreDB {
   }
 
   getCustomerById(id: string): CustomerCRM | undefined {
+    this.ensureFreshData();
     return this.data.customers.find((c) => c.id === id);
   }
 
   updateCustomerNotes(id: string, notes: string, status?: CustomerCRM['status']): CustomerCRM | null {
+    this.ensureFreshData();
     const customer = this.data.customers.find((c) => c.id === id);
     if (!customer) return null;
     customer.notes = notes;
@@ -750,6 +1393,7 @@ class StoreDB {
 
   // --- LEADS & ENQUIRIES ---
   getLeads(searchQuery?: string): Lead[] {
+    this.ensureFreshData();
     let list = [...this.data.leads];
     if (searchQuery) {
       const q = searchQuery.toLowerCase().trim();
@@ -768,6 +1412,7 @@ class StoreDB {
   }
 
   createLead(leadData: Partial<Lead>): Lead {
+    this.ensureFreshData();
     const newLead: Lead = {
       id: `lead-${Date.now()}`,
       name: leadData.name || 'Anonymous Prospect',
@@ -792,11 +1437,16 @@ class StoreDB {
       message: `${newLead.source} for "${newLead.productInterest}". Phone: ${newLead.phone}`
     });
 
+    sendLeadNotificationEmail(newLead, this.data.settings)
+      .then((r) => r.log && this.addEmailLog(r.log))
+      .catch((e) => console.error('[DB] Failed lead email alert:', e));
+
     this.commit();
     return newLead;
   }
 
   updateLead(id: string, updates: Partial<Lead>): Lead | null {
+    this.ensureFreshData();
     const lead = this.data.leads.find((l) => l.id === id);
     if (!lead) return null;
     Object.assign(lead, updates);
@@ -806,12 +1456,16 @@ class StoreDB {
 
   // --- NOTIFICATIONS ---
   getNotifications(): AdminNotification[] {
+    this.ensureFreshData();
     return [...this.data.notifications].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
   }
 
-  addNotification(notif: Omit<AdminNotification, 'id' | 'read' | 'createdAt'>): AdminNotification {
+  addNotification(
+    notif: Omit<AdminNotification, 'id' | 'read' | 'createdAt'>,
+    extra?: { order?: Order }
+  ): AdminNotification {
     const n: AdminNotification = {
       id: `notif-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       ...notif,
@@ -823,10 +1477,51 @@ class StoreDB {
     if (this.data.notifications.length > 50) {
       this.data.notifications.pop();
     }
+
+    // Universal Real-Time Dispatch: Instantly streams to all open phones/laptops via SSE
+    // and sends native Web Push to wake up background mobile devices
+    import('./pushService.ts')
+      .then(({ dispatchUniversalNotification }) => {
+        dispatchUniversalNotification(n, extra).catch((err) => {
+          console.debug('[UniversalNotification] Note:', err?.message || err);
+        });
+      })
+      .catch(() => {});
+
     return n;
   }
 
+  // --- DEVICE PUSH SUBSCRIPTIONS (Universal Mobile & Desktop Background Notifications) ---
+  getPushSubscriptions(): PushSubscriptionRecord[] {
+    this.ensureFreshData();
+    return this.data.pushSubscriptions || [];
+  }
+
+  savePushSubscription(sub: PushSubscriptionRecord): void {
+    this.ensureFreshData();
+    if (!this.data.pushSubscriptions) {
+      this.data.pushSubscriptions = [];
+    }
+    // De-duplicate if same endpoint
+    this.data.pushSubscriptions = this.data.pushSubscriptions.filter(
+      (s) => s.endpoint !== sub.endpoint
+    );
+    this.data.pushSubscriptions.push(sub);
+    this.commit();
+    console.log(`[StoreDB] Saved push subscription (${sub.deviceType || 'device'}). Total registered: ${this.data.pushSubscriptions.length}`);
+  }
+
+  removePushSubscription(endpoint: string): void {
+    this.ensureFreshData();
+    if (!this.data.pushSubscriptions) return;
+    this.data.pushSubscriptions = this.data.pushSubscriptions.filter(
+      (s) => s.endpoint !== endpoint
+    );
+    this.commit();
+  }
+
   markNotificationRead(id: string): void {
+    this.ensureFreshData();
     const n = this.data.notifications.find((item) => item.id === id);
     if (n) {
       n.read = true;
@@ -835,12 +1530,14 @@ class StoreDB {
   }
 
   markAllNotificationsRead(): void {
+    this.ensureFreshData();
     this.data.notifications.forEach((n) => (n.read = true));
     this.commit();
   }
 
   // --- REVIEWS ---
   getReviews(productId?: string, onlyApproved = true): Review[] {
+    this.ensureFreshData();
     let revs = [...this.data.reviews];
     if (productId) {
       revs = revs.filter((r) => r.productId === productId);
@@ -852,6 +1549,7 @@ class StoreDB {
   }
 
   addReview(reviewData: Partial<Review>): Review {
+    this.ensureFreshData();
     const newRev: Review = {
       id: `rev-${Date.now()}`,
       productId: reviewData.productId || 'iphone-17-pro',
@@ -870,6 +1568,7 @@ class StoreDB {
   }
 
   updateReview(id: string, updates: Partial<Review>): Review | null {
+    this.ensureFreshData();
     const rev = this.data.reviews.find((r) => r.id === id);
     if (!rev) return null;
     Object.assign(rev, updates);
@@ -878,6 +1577,7 @@ class StoreDB {
   }
 
   deleteReview(id: string): boolean {
+    this.ensureFreshData();
     const initialLen = this.data.reviews.length;
     this.data.reviews = this.data.reviews.filter((r) => r.id !== id);
     if (this.data.reviews.length !== initialLen) {
@@ -889,13 +1589,57 @@ class StoreDB {
 
   // --- SETTINGS ---
   getSettings(): StoreSettings {
+    this.ensureFreshData();
     return { ...this.data.settings };
   }
 
   updateSettings(updates: Partial<StoreSettings>): StoreSettings {
+    this.ensureFreshData();
     this.data.settings = {
       ...this.data.settings,
       ...updates,
+      homeConfig: updates.homeConfig
+        ? {
+            ...this.data.settings.homeConfig,
+            ...updates.homeConfig,
+            hero: {
+              ...(this.data.settings.homeConfig?.hero || DEFAULT_HOME_CONFIG.hero),
+              ...(updates.homeConfig.hero || {})
+            },
+            categoriesSection: {
+              ...(this.data.settings.homeConfig?.categoriesSection || DEFAULT_HOME_CONFIG.categoriesSection),
+              ...(updates.homeConfig.categoriesSection || {})
+            },
+            showcase1: {
+              ...(this.data.settings.homeConfig?.showcase1 || DEFAULT_HOME_CONFIG.showcase1),
+              ...(updates.homeConfig.showcase1 || {})
+            },
+            showcase2: {
+              ...(this.data.settings.homeConfig?.showcase2 || DEFAULT_HOME_CONFIG.showcase2),
+              ...(updates.homeConfig.showcase2 || {})
+            },
+            bestSellers: {
+              ...(this.data.settings.homeConfig?.bestSellers || DEFAULT_HOME_CONFIG.bestSellers),
+              ...(updates.homeConfig.bestSellers || {})
+            },
+            showcase3: {
+              ...(this.data.settings.homeConfig?.showcase3 || DEFAULT_HOME_CONFIG.showcase3),
+              ...(updates.homeConfig.showcase3 || {})
+            },
+            trust: {
+              ...(this.data.settings.homeConfig?.trust || DEFAULT_HOME_CONFIG.trust),
+              ...(updates.homeConfig.trust || {})
+            },
+            faq: {
+              ...(this.data.settings.homeConfig?.faq || DEFAULT_HOME_CONFIG.faq),
+              ...(updates.homeConfig.faq || {})
+            },
+            newsletter: {
+              ...(this.data.settings.homeConfig?.newsletter || DEFAULT_HOME_CONFIG.newsletter),
+              ...(updates.homeConfig.newsletter || {})
+            }
+          }
+        : this.data.settings.homeConfig,
       paymentMethods: {
         ...this.data.settings.paymentMethods,
         ...(updates.paymentMethods || {})
@@ -905,12 +1649,57 @@ class StoreDB {
         ...(updates.whatsappConfig || {})
       }
     };
+    (this.data.settings as any).updatedAt = new Date().toISOString();
     this.commit();
+    this.saveSettingsToFirestore();
     return this.data.settings;
+  }
+
+  resetHomeConfig(): StoreSettings {
+    this.ensureFreshData();
+    this.data.settings.homeConfig = JSON.parse(JSON.stringify(DEFAULT_HOME_CONFIG));
+    (this.data.settings as any).updatedAt = new Date().toISOString();
+    this.commit();
+    this.saveSettingsToFirestore();
+    return this.data.settings;
+  }
+
+  // --- MEDIA STORAGE ---
+  saveMedia(filename: string, dataUrl: string): void {
+    this.ensureFreshData();
+    if (!this.data.media) {
+      this.data.media = {};
+    }
+    this.data.media[filename] = dataUrl;
+    this.commit();
+
+    // Immediately write buffer to disk in public/uploads and src/assets/uploads
+    try {
+      const match = dataUrl.match(/^data:image\/([a-zA-Z0-9\+\-]+);base64,(.+)$/);
+      if (match) {
+        const buffer = Buffer.from(match[2], 'base64');
+        const uploadDirs = [
+          path.resolve(process.cwd(), 'public/uploads'),
+          path.resolve(process.cwd(), 'src/assets/uploads')
+        ];
+        for (const dir of uploadDirs) {
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, filename), buffer);
+        }
+      }
+    } catch (diskErr) {
+      console.warn(`[StoreDB] saveMedia disk write notice for ${filename}:`, diskErr);
+    }
+  }
+
+  getMedia(filename: string): string | undefined {
+    this.ensureFreshData();
+    return this.data.media?.[filename];
   }
 
   // --- ANALYTICS ---
   getAnalytics(): any {
+    this.ensureFreshData();
     const totalOrders = this.data.orders.length;
     const verifiedOrders = this.data.orders.filter((o) => o.paymentStatus === 'verified');
     const awaitingVerificationOrders = this.data.orders.filter(

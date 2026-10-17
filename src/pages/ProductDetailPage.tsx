@@ -20,6 +20,8 @@ import {
   HelpCircle,
   Image as ImageIcon
 } from 'lucide-react';
+import { YouMightAlsoLike } from '../components/YouMightAlsoLike';
+import { ProductBundleBuilder } from '../components/ProductBundleBuilder';
 
 export const ProductDetailPage: React.FC = () => {
   const {
@@ -49,11 +51,11 @@ export const ProductDetailPage: React.FC = () => {
   const [reviewSubmitted, setReviewSubmitted] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
 
-  // Valid product images from database (exclude any unwanted asset paths)
+  // Valid product images from database
   const validImages = useMemo(() => {
     if (!product?.images) return [];
     return product.images.filter(
-      (img) => Boolean(img && typeof img === 'string' && img.trim() && !img.startsWith('/src/assets/images/'))
+      (img) => Boolean(img && typeof img === 'string' && img.trim())
     );
   }, [product]);
 
@@ -77,9 +79,21 @@ export const ProductDetailPage: React.FC = () => {
 
   // Load reviews for this product
   useEffect(() => {
+    let isMounted = true;
     if (product) {
-      api.getReviews(product.id).then(setReviews).catch(console.error);
+      api.getReviews(product.id)
+        .then((data) => {
+          if (isMounted && data) {
+            setReviews(data);
+          }
+        })
+        .catch((err) => {
+          console.warn('Notice: Could not load reviews for product:', err);
+        });
     }
+    return () => {
+      isMounted = false;
+    };
   }, [product]);
 
   // Storages and colors available
@@ -140,7 +154,7 @@ export const ProductDetailPage: React.FC = () => {
     );
     const colorImg = colorOpt?.image || match?.color?.image || match?.image;
 
-    if (colorImg && colorImg.trim() && !colorImg.startsWith('/src/assets/images/')) {
+    if (colorImg && colorImg.trim()) {
       setActiveColorImage(colorImg);
       const foundIdx = validImages.findIndex((img) => img === colorImg);
       if (foundIdx !== -1) {
@@ -153,19 +167,19 @@ export const ProductDetailPage: React.FC = () => {
 
   // The active main image to display on the stage
   const currentMainImage = useMemo(() => {
-    if (activeColorImage && activeColorImage.trim() && !activeColorImage.startsWith('/src/assets/images/')) {
+    if (activeColorImage && activeColorImage.trim()) {
       return activeColorImage;
     }
     const colorOpt = availableColors.find(
       (c) => c.name.toLowerCase() === selectedVariant?.color?.name?.toLowerCase()
     );
-    if (colorOpt?.image && colorOpt.image.trim() && !colorOpt.image.startsWith('/src/assets/images/')) {
+    if (colorOpt?.image && colorOpt.image.trim()) {
       return colorOpt.image;
     }
-    if (selectedVariant?.color?.image && selectedVariant.color.image.trim() && !selectedVariant.color.image.startsWith('/src/assets/images/')) {
+    if (selectedVariant?.color?.image && selectedVariant.color.image.trim()) {
       return selectedVariant.color.image;
     }
-    if (selectedVariant?.image && selectedVariant.image.trim() && !selectedVariant.image.startsWith('/src/assets/images/')) {
+    if (selectedVariant?.image && selectedVariant.image.trim()) {
       return selectedVariant.image;
     }
     if (validImages.length > 0) {
@@ -201,7 +215,7 @@ export const ProductDetailPage: React.FC = () => {
   const discount = calculateDiscountPercentage(currentPrice, currentCompareAt);
 
   const whatsappUrl = generateWhatsAppOrderUrl({
-    phone: settings?.whatsappNumber || '2348145550192',
+    phone: settings?.whatsappNumber || '2349036422181',
     productName: product.name,
     storage: selectedVariant?.storage,
     color: selectedVariant?.color.name,
@@ -477,6 +491,15 @@ export const ProductDetailPage: React.FC = () => {
             </div>
           )}
 
+          {/* Frequently Bought Together Bundle Builder (Interactive Setup Upsell) */}
+          <ProductBundleBuilder
+            product={product}
+            selectedVariant={selectedVariant}
+            currentPrice={currentPrice}
+            currentCompareAt={currentCompareAt}
+            activeColorImage={currentMainImage}
+          />
+
           {/* Actions: Add to Bag, Buy Now & WhatsApp */}
           <div className="space-y-2.5 pt-2">
             <button
@@ -649,6 +672,17 @@ export const ProductDetailPage: React.FC = () => {
             </div>
           )}
         </div>
+      </div>
+
+      {/* You Might Also Like Section (Interactive Full Recommendations Showcase) */}
+      <div className="mt-12 sm:mt-16">
+        <YouMightAlsoLike
+          variant="full"
+          currentProductId={product.id}
+          currentProductCategory={product.category}
+          title={`You Might Also Like · Similar Flagships & Accessories`}
+          subtitle={`Popular companion accessories and alternative ${product.brand} devices matched for you`}
+        />
       </div>
 
       {/* Review Modal */}

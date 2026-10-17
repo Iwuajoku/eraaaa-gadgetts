@@ -5,6 +5,7 @@ import { api } from '../lib/api';
 interface StoreContextType {
   products: Product[];
   settings: StoreSettings | null;
+  setSettings: (settings: StoreSettings) => void;
   loading: boolean;
   cart: CartItem[];
   isCartOpen: boolean;
@@ -30,14 +31,30 @@ interface StoreContextType {
   isAdmin: boolean;
   setIsAdmin: (isAdmin: boolean) => void;
   adminToken: string | null;
+  adminActiveTab: string;
+  setAdminActiveTab: (tab: string) => void;
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
 
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [products, setProducts] = useState<Product[]>([]);
-  const [settings, setSettings] = useState<StoreSettings | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [products, setProducts] = useState<Product[]>(() => {
+    try {
+      const cached = localStorage.getItem('era_products_cache');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [settings, setSettings] = useState<StoreSettings | null>(() => {
+    try {
+      const cached = localStorage.getItem('era_settings_cache');
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [loading, setLoading] = useState(false);
   const [cart, setCart] = useState<CartItem[]>(() => {
     try {
       const saved = localStorage.getItem('era_cart');
@@ -54,6 +71,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [completedOrder, setCompletedOrder] = useState<Order | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminToken, setAdminToken] = useState<string | null>(null);
+  const [adminActiveTab, setAdminActiveTab] = useState<string>('overview');
 
   // Sync cart to local storage
   useEffect(() => {
@@ -72,19 +90,63 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setIsAdmin(true);
     }
     loadInitialData();
+
+    // Auto-refresh when window regains focus or becomes visible
+    const handleSync = () => {
+      refreshProducts();
+      refreshSettings();
+    };
+
+    window.addEventListener('focus', handleSync);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        handleSync();
+      }
+    });
+
+    // Periodic live sync (every 10s) to reflect any background backend changes
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        handleSync();
+      }
+    }, 10000);
+
+    return () => {
+      window.removeEventListener('focus', handleSync);
+      clearInterval(interval);
+    };
   }, []);
 
-  const loadInitialData = async () => {
-    setLoading(true);
+  // Re-sync products and settings on view change
+  useEffect(() => {
+    refreshProducts();
+    refreshSettings();
+  }, [currentView]);
+
+  const loadInitialData = async (retries = 3) => {
     try {
       const [fetchedProducts, fetchedSettings] = await Promise.all([
         api.getProducts(),
         api.getSettings()
       ]);
-      setProducts(fetchedProducts);
-      setSettings(fetchedSettings);
+      if (Array.isArray(fetchedProducts) && fetchedProducts.length > 0) {
+        setProducts(fetchedProducts);
+        try {
+          localStorage.setItem('era_products_cache', JSON.stringify(fetchedProducts));
+        } catch (_) {}
+      }
+      if (fetchedSettings) {
+        setSettings(fetchedSettings);
+        try {
+          localStorage.setItem('era_settings_cache', JSON.stringify(fetchedSettings));
+        } catch (_) {}
+      }
     } catch (err) {
-      console.error('Error loading initial data:', err);
+      if (retries > 0) {
+        setTimeout(() => loadInitialData(retries - 1), 1000);
+      } else {
+        console.warn('Initial data load delayed, will retry automatically:', err);
+      }
     } finally {
       setLoading(false);
     }
@@ -93,18 +155,28 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const refreshProducts = async () => {
     try {
       const fetched = await api.getProducts();
-      setProducts(fetched);
+      if (Array.isArray(fetched) && fetched.length > 0) {
+        setProducts(fetched);
+        try {
+          localStorage.setItem('era_products_cache', JSON.stringify(fetched));
+        } catch (_) {}
+      }
     } catch (err) {
-      console.error('Failed to refresh products:', err);
+      console.warn('Products sync delayed (will retry on next interval):', err);
     }
   };
 
   const refreshSettings = async () => {
     try {
       const fetched = await api.getSettings();
-      setSettings(fetched);
+      if (fetched) {
+        setSettings(fetched);
+        try {
+          localStorage.setItem('era_settings_cache', JSON.stringify(fetched));
+        } catch (_) {}
+      }
     } catch (err) {
-      console.error('Failed to refresh settings:', err);
+      console.warn('Settings sync delayed (will retry on next interval):', err);
     }
   };
 
@@ -173,6 +245,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       value={{
         products,
         settings,
+        setSettings,
         loading,
         cart,
         isCartOpen,
@@ -197,7 +270,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setCompletedOrder,
         isAdmin,
         setIsAdmin,
-        adminToken
+        adminToken,
+        adminActiveTab,
+        setAdminActiveTab
       }}
     >
       {children}

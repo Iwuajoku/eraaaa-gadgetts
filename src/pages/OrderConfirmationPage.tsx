@@ -14,11 +14,28 @@ import {
   ShieldCheck,
   AlertCircle
 } from 'lucide-react';
+import { YouMightAlsoLike } from '../components/YouMightAlsoLike';
 
 export const OrderConfirmationPage: React.FC = () => {
   const { completedOrder, setCurrentView, settings } = useStore();
   const [showFullInvoice, setShowFullInvoice] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedAccount, setCopiedAccount] = useState(false);
+
+  const bankConfig = {
+    bankName: settings?.paymentMethods?.bankTransfer?.bankName || 'Kuda MFB',
+    accountName: settings?.paymentMethods?.bankTransfer?.accountName || 'Chidera Kelvin',
+    accountNumber: settings?.paymentMethods?.bankTransfer?.accountNumber || '2064248680',
+    instructions: settings?.paymentMethods?.bankTransfer?.instructions || 'Please transfer the exact amount shown to the Kuda MFB account details provided above.'
+  };
+
+  const handleCopyAccount = () => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(bankConfig.accountNumber);
+      setCopiedAccount(true);
+      setTimeout(() => setCopiedAccount(false), 2500);
+    }
+  };
 
   if (!completedOrder) {
     return (
@@ -38,7 +55,7 @@ export const OrderConfirmationPage: React.FC = () => {
   const isPaid = completedOrder.paymentStatus === 'verified';
 
   // Format owner whatsapp notification message
-  const ownerWhatsapp = settings?.whatsappConfig?.ownerWhatsApp || settings?.whatsappNumber || '2348145550192';
+  const ownerWhatsapp = settings?.whatsappConfig?.ownerWhatsApp || settings?.whatsappNumber || '2349036422181';
   const firstItem = completedOrder.items[0];
 
   const whatsappMessage = `*NEW ERA GADGETS ORDER*
@@ -175,6 +192,71 @@ Invoice Token: ${completedOrder.accessToken}`;
         </div>
       </div>
 
+      {/* Official Kuda MFB Bank Details Box (Shown when payment is not yet verified) */}
+      {!isPaid && (
+        <div className="bg-neutral-950 text-white rounded-3xl p-6 sm:p-8 shadow-xl space-y-5 border border-neutral-800">
+          <div className="flex items-center justify-between pb-4 border-b border-neutral-800">
+            <div>
+              <span className="text-[11px] uppercase tracking-wider text-emerald-400 font-bold block">
+                Official Payment Account
+              </span>
+              <h3 className="text-sm font-bold text-white">Transfer to Kuda MFB</h3>
+            </div>
+            <div className="text-right">
+              <span className="text-[10px] uppercase text-neutral-400 block">Exact Total</span>
+              <span className="text-base sm:text-lg font-bold text-emerald-400 tabular-nums">
+                {formatNaira(completedOrder.total)}
+              </span>
+            </div>
+          </div>
+
+          <div className="p-4 sm:p-5 rounded-2xl bg-neutral-900 border border-neutral-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400 block mb-1">
+                Account Number (NUBAN)
+              </span>
+              <span className="text-2xl sm:text-3xl font-mono font-bold tracking-widest text-white">
+                {bankConfig.accountNumber}
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleCopyAccount}
+              className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-neutral-950 text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shrink-0"
+            >
+              {copiedAccount ? (
+                <>
+                  <Check className="w-4 h-4 text-neutral-950 stroke-[3]" />
+                  <span>Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-4 h-4 text-neutral-950" />
+                  <span>Copy Account Number</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div className="p-3 rounded-xl bg-neutral-900/80 border border-neutral-800">
+              <span className="text-[10px] uppercase tracking-wider text-neutral-400 block">Bank Name</span>
+              <span className="text-sm font-bold text-white mt-0.5 block">{bankConfig.bankName}</span>
+            </div>
+
+            <div className="p-3 rounded-xl bg-neutral-900/80 border border-neutral-800">
+              <span className="text-[10px] uppercase tracking-wider text-neutral-400 block">Account Name</span>
+              <span className="text-sm font-bold text-white mt-0.5 block">{bankConfig.accountName}</span>
+            </div>
+          </div>
+
+          <p className="text-[11px] text-neutral-400 leading-relaxed">
+            {bankConfig.instructions} Use <strong className="text-white">{completedOrder.orderNumber}</strong> as the payment narration.
+          </p>
+        </div>
+      )}
+
       {/* 2. Key Order Metrics Card */}
       <div className="bg-white rounded-3xl p-6 sm:p-8 border border-neutral-100 shadow-sm space-y-6">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pb-6 border-b border-neutral-100">
@@ -284,6 +366,15 @@ Invoice Token: ${completedOrder.accessToken}`;
             </div>
           </div>
         )}
+      </div>
+
+      {/* You Might Also Like / Add to Shipment */}
+      <div className="pt-2">
+        <YouMightAlsoLike
+          variant="checkout"
+          title="Pair More With Your Order"
+          subtitle="Add companion gadgets or chargers before your dispatch driver leaves"
+        />
       </div>
 
       <div className="text-center pt-2">

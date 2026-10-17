@@ -1,8 +1,20 @@
-import express, { Request, Response } from 'express';
-import { db } from './db';
-import { Order, Product, ProductVariant } from '../src/types';
+import express, { type Request, type Response } from 'express';
+import fs from 'fs';
+import path from 'path';
+import { db } from './db.ts';
+import { sendTestOrderEmail } from './mailer.ts';
+import { VAPID_PUBLIC_KEY, registerSSEClient } from './pushService.ts';
+import type { Order, Product, ProductVariant } from '../src/types.ts';
 
 export const apiRouter = express.Router();
+
+// Never cache API responses - ensure fresh live data on all backend changes
+apiRouter.use((_req: Request, res: Response, next: express.NextFunction) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
 
 const ADMIN_TOKEN = 'era_token_9f81a7b2c4e6';
 
@@ -74,6 +86,7 @@ apiRouter.get('/auth/me', (req: Request, res: Response) => {
 
 // --- SETTINGS & PAYMENT METHODS ---
 apiRouter.get('/settings', (_req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   const settings = db.getSettings();
   res.json(settings);
 });
@@ -81,6 +94,142 @@ apiRouter.get('/settings', (_req: Request, res: Response) => {
 apiRouter.put('/settings', requireAdmin, (req: Request, res: Response) => {
   const updated = db.updateSettings(req.body);
   res.json(updated);
+});
+
+apiRouter.post('/settings/home-config/reset', requireAdmin, (_req: Request, res: Response) => {
+  const updated = db.resetHomeConfig();
+  res.json(updated);
+});
+
+apiRouter.post('/settings/test-email', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { targetEmail } = req.body;
+    const settings = db.getSettings();
+    const result = await sendTestOrderEmail(targetEmail, settings);
+    if (result.log) {
+      db.addEmailLog(result.log);
+    }
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to send test email' });
+  }
+});
+
+apiRouter.get('/email-logs', requireAdmin, (_req: Request, res: Response) => {
+  const logs = db.getEmailLogs();
+  res.json(logs);
+});
+
+// Image Upload Endpoint (saves base64 data URLs to public/uploads/ and src/assets/uploads/ and db media cache)
+apiRouter.post('/upload', requireAdmin, (req: Request, res: Response) => {
+  try {
+    const { data, name } = req.body;
+    if (!data || typeof data !== 'string') {
+      return res.status(400).json({ error: 'Missing image data' });
+    }
+
+    if (data.startsWith('data:image/')) {
+      const match = data.match(/^data:image\/([a-zA-Z0-9\+\-]+);base64,(.+)$/);
+      if (match) {
+        let ext = match[1].toLowerCase();
+        if (ext === 'jpeg') ext = 'jpg';
+        if (ext === 'svg+xml') ext = 'svg';
+
+        const cleanName = (name || 'upload')
+          .replace(/[^a-zA-Z0-9_-]/g, '_')
+          .slice(0, 30);
+        const filename = `${cleanName}_${Date.now()}.${ext}`;
+
+        // Save into db persistent media storage
+        db.saveMedia(filename, data);
+
+        // Also write to disk if possible (both public/uploads and src/assets/uploads)
+        const dirs = [
+          path.resolve(process.cwd(), 'public/uploads'),
+          path.resolve(process.cwd(), 'src/assets/uploads')
+        ];
+
+        const buffer = Buffer.from(match[2], 'base64');
+        for (const dir of dirs) {
+          try {
+            if (!fs.existsSync(dir)) {
+              fs.mkdirSync(dir, { recursive: true });
+            }
+            fs.writeFileSync(path.join(dir, filename), buffer);
+          } catch (writeErr) {
+            console.warn(`[API /upload] Could not write to ${dir}:`, writeErr);
+          }
+        }
+
+        const publicUrl = `/uploads/${filename}`;
+        return res.json({ url: publicUrl });
+      }
+    }
+
+    // If it's already a URL or path, return it directly
+    return res.json({ url: data });
+  } catch (err: any) {
+    console.error('[API /upload] Error uploading image:', err);
+    return res.json({ url: req.body.data });
+  }
+});
+
+// Image Upload via URL endpoint: fetches remote image URL, saves locally & persists to Firestore
+apiRouter.post('/upload-from-url', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const rawUrl = req.body.url;
+    const name = req.body.name;
+    if (!rawUrl || typeof rawUrl !== 'string') {
+      return res.status(400).json({ error: 'Image URL is required' });
+    }
+    const cleanUrl = rawUrl.trim();
+    if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+      return res.status(400).json({ error: 'Valid HTTP/HTTPS image URL is required' });
+    }
+
+    const response = await fetch(cleanUrl, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+      }
+    });
+
+    if (!response.ok) {
+      return res.status(400).json({ error: `Could not reach image (HTTP ${response.status})` });
+    }
+
+    const rawType = response.headers.get('content-type') || 'image/jpeg';
+    const contentType = rawType.split(';')[0].trim().toLowerCase();
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    if (buffer.length === 0) {
+      return res.status(400).json({ error: 'Fetched image is empty' });
+    }
+
+    let ext = 'jpg';
+    if (contentType.includes('png') || cleanUrl.includes('.png')) ext = 'png';
+    else if (contentType.includes('webp') || cleanUrl.includes('.webp')) ext = 'webp';
+    else if (contentType.includes('svg') || cleanUrl.includes('.svg')) ext = 'svg';
+    else if (contentType.includes('gif') || cleanUrl.includes('.gif')) ext = 'gif';
+
+    const cleanName = (name || 'url_import')
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, '_')
+      .slice(0, 30);
+    const filename = `${cleanName}_${Date.now()}.${ext}`;
+
+    const dataUrl = `data:${contentType.startsWith('image/') ? contentType : 'image/' + ext};base64,${buffer.toString('base64')}`;
+    db.saveMedia(filename, dataUrl);
+
+    const publicUrl = `/uploads/${filename}`;
+    return res.json({ success: true, url: publicUrl, filename, originalUrl: cleanUrl });
+  } catch (err: any) {
+    console.error('[API /upload-from-url] Error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to download and import image' });
+  }
 });
 
 // --- PRODUCTS ---
@@ -146,17 +295,45 @@ apiRouter.get('/products/:idOrSlug', (req: Request, res: Response) => {
   res.json(product);
 });
 
+const cleanPriceNumber = (val: any): number => {
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  if (!val && val !== 0) return 0;
+  const num = parseFloat(String(val).replace(/[^0-9.]/g, ''));
+  return isNaN(num) ? 0 : num;
+};
+
 apiRouter.post('/products', requireAdmin, (req: Request, res: Response) => {
   try {
-    const { name, basePrice, category } = req.body;
+    const { name, category } = req.body;
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'Product name is required' });
     }
-    if (basePrice === undefined || Number(basePrice) < 0) {
-      return res.status(400).json({ error: 'Valid price is required' });
-    }
     if (!category) {
       return res.status(400).json({ error: 'Category is required' });
+    }
+
+    const cleanBasePrice = cleanPriceNumber(req.body.basePrice);
+    if (req.body.basePrice === undefined || req.body.basePrice === null || cleanBasePrice < 0) {
+      return res.status(400).json({ error: 'Valid price is required' });
+    }
+    req.body.basePrice = cleanBasePrice;
+    if (req.body.compareAtPrice != null) req.body.compareAtPrice = cleanPriceNumber(req.body.compareAtPrice);
+    if (req.body.costPrice != null) req.body.costPrice = cleanPriceNumber(req.body.costPrice);
+
+    if (Array.isArray(req.body.storageOptions)) {
+      req.body.storageOptions = req.body.storageOptions.map((s: any) => ({
+        ...s,
+        presetPrice: cleanPriceNumber(s.presetPrice),
+        compareAtPrice: s.compareAtPrice != null ? cleanPriceNumber(s.compareAtPrice) : null
+      }));
+    }
+
+    if (Array.isArray(req.body.variants)) {
+      req.body.variants = req.body.variants.map((v: any) => ({
+        ...v,
+        price: cleanPriceNumber(v.price),
+        compareAtPrice: v.compareAtPrice != null ? cleanPriceNumber(v.compareAtPrice) : null
+      }));
     }
 
     const created = db.createProduct(req.body);
@@ -168,6 +345,26 @@ apiRouter.post('/products', requireAdmin, (req: Request, res: Response) => {
 
 apiRouter.put('/products/:id', requireAdmin, (req: Request, res: Response) => {
   try {
+    if (req.body.basePrice !== undefined) req.body.basePrice = cleanPriceNumber(req.body.basePrice);
+    if (req.body.compareAtPrice != null) req.body.compareAtPrice = cleanPriceNumber(req.body.compareAtPrice);
+    if (req.body.costPrice != null) req.body.costPrice = cleanPriceNumber(req.body.costPrice);
+
+    if (Array.isArray(req.body.storageOptions)) {
+      req.body.storageOptions = req.body.storageOptions.map((s: any) => ({
+        ...s,
+        presetPrice: cleanPriceNumber(s.presetPrice),
+        compareAtPrice: s.compareAtPrice != null ? cleanPriceNumber(s.compareAtPrice) : null
+      }));
+    }
+
+    if (Array.isArray(req.body.variants)) {
+      req.body.variants = req.body.variants.map((v: any) => ({
+        ...v,
+        price: cleanPriceNumber(v.price),
+        compareAtPrice: v.compareAtPrice != null ? cleanPriceNumber(v.compareAtPrice) : null
+      }));
+    }
+
     const updated = db.updateProduct(req.params.id, req.body);
     if (!updated) {
       return res.status(404).json({ error: 'Product not found' });
@@ -282,75 +479,74 @@ apiRouter.get('/orders/:id', (req: Request, res: Response) => {
 
 // Create Order (Checkout)
 apiRouter.post('/orders', (req: Request, res: Response) => {
-  const settings = db.getSettings();
-  if (settings.storeMaintenanceMode) {
-    return res.status(503).json({ error: settings.maintenanceMessage });
-  }
-
-  const { customer, items, deliveryOption, paymentMethod } = req.body;
-  if (!customer?.fullName || !customer?.phone || !customer?.address) {
-    return res.status(400).json({ error: 'Please provide full name, phone number, and delivery address' });
-  }
-  if (!items || !Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ error: 'Cart is empty' });
-  }
-
-  // Calculate pricing server-side to guarantee integrity
-  let subtotal = 0;
-  const verifiedItems = items.map((item: any) => {
-    const product = db.getProductByIdOrSlug(item.productId);
-    if (!product) {
-      throw new Error(`Product ${item.productId} not found`);
+  try {
+    const settings = db.getSettings();
+    if (settings.storeMaintenanceMode) {
+      return res.status(503).json({ error: settings.maintenanceMessage });
     }
-    const variant = product.variants.find((v) => v.id === item.variantId) || product.variants[0];
-    if (variant.isSold || variant.stock < item.quantity) {
-      throw new Error(`${product.name} (${variant.storage || ''} ${variant.color.name}) is out of stock`);
+
+    const { customer, items, deliveryOption, paymentMethod } = req.body;
+    if (!customer?.fullName || !customer?.phone || !customer?.address) {
+      return res.status(400).json({ error: 'Please provide full name, phone number, and delivery address' });
     }
-    const itemTotal = variant.price * item.quantity;
-    subtotal += itemTotal;
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'Cart is empty' });
+    }
 
-    return {
-      productId: product.id,
-      productName: product.name,
-      variantId: variant.id,
-      storage: variant.storage,
-      colorName: variant.color.name,
-      condition: product.condition,
-      price: variant.price,
-      quantity: item.quantity,
-      image: item.image || product.images[0],
-      sku: variant.sku
-    };
-  });
+    // Calculate pricing server-side to guarantee integrity
+    let subtotal = 0;
+    const verifiedItems = items.map((item: any) => {
+      const product = db.getProductByIdOrSlug(item.productId);
+      if (!product) {
+        throw new Error(`Product ${item.productId} not found`);
+      }
+      const variant = product.variants.find((v) => v.id === item.variantId) || product.variants[0];
+      if (variant.isSold || variant.stock < item.quantity) {
+        throw new Error(`${product.name} (${variant.storage || ''} ${variant.color.name}) is out of stock`);
+      }
+      const itemTotal = variant.price * item.quantity;
+      subtotal += itemTotal;
 
-  let deliveryFee = 0;
-  if (deliveryOption === 'lagos') {
-    deliveryFee = settings.lagosDeliveryFee;
-  } else if (deliveryOption === 'outside_lagos') {
-    deliveryFee = settings.outsideLagosDeliveryFee;
-  } else {
-    deliveryFee = settings.pickupFee;
+      return {
+        productId: product.id,
+        productName: product.name,
+        variantId: variant.id,
+        storage: variant.storage,
+        colorName: variant.color.name,
+        condition: product.condition,
+        price: variant.price,
+        quantity: item.quantity,
+        image: item.image || product.images[0],
+        sku: variant.sku
+      };
+    });
+
+    let deliveryFee = 0;
+    if (deliveryOption === 'pickup') {
+      deliveryFee = 0;
+    } else {
+      // Fixed delivery price of 5000
+      deliveryFee = settings.deliveryFee || settings.lagosDeliveryFee || 5000;
+    }
+
+    const total = subtotal + deliveryFee;
+
+    const newOrder = db.createOrder({
+      customer,
+      items: verifiedItems,
+      subtotal,
+      deliveryFee,
+      deliveryOption,
+      total,
+      paymentMethod: paymentMethod || 'bank_transfer',
+      paymentStatus: 'pending',
+      orderStatus: 'Pending'
+    });
+
+    res.status(201).json(newOrder);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Failed to place order' });
   }
-
-  if (subtotal >= settings.freeDeliveryThreshold) {
-    deliveryFee = 0;
-  }
-
-  const total = subtotal + deliveryFee;
-
-  const newOrder = db.createOrder({
-    customer,
-    items: verifiedItems,
-    subtotal,
-    deliveryFee,
-    deliveryOption,
-    total,
-    paymentMethod: paymentMethod || 'bank_transfer',
-    paymentStatus: 'pending',
-    orderStatus: 'Pending'
-  });
-
-  res.status(201).json(newOrder);
 });
 
 // Customer submits payment confirmation ("I've Made the Transfer") + optional receipt proof
@@ -525,6 +721,89 @@ apiRouter.patch('/notifications/:id/read', requireAdmin, (req: Request, res: Res
 apiRouter.post('/notifications/mark-all-read', requireAdmin, (_req: Request, res: Response) => {
   db.markAllNotificationsRead();
   res.json({ success: true });
+});
+
+// 1. Get VAPID public key for native Web Push subscription
+apiRouter.get('/notifications/vapid-public-key', (_req: Request, res: Response) => {
+  res.json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+// 2. Real-Time Server-Sent Events (SSE) Stream: sub-second sync across all open laptops and phones
+apiRouter.get('/notifications/stream', (req: Request, res: Response) => {
+  const token = (req.query.token || req.query.admin_token || req.headers.authorization || '') as string;
+  if (!token || !token.includes('era_token_9f81a7b2c4e6')) {
+    return res.status(401).json({ error: 'Admin authorization required for live stream' });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const unregister = registerSSEClient(res);
+
+  req.on('close', () => {
+    unregister();
+  });
+});
+
+// 3. Register mobile / desktop device for background Web Push
+apiRouter.post('/notifications/push-subscribe', requireAdmin, (req: Request, res: Response) => {
+  try {
+    const { subscription, deviceType } = req.body;
+    if (!subscription || !subscription.endpoint || !subscription.keys?.p256dh || !subscription.keys?.auth) {
+      return res.status(400).json({ error: 'Valid push subscription object required' });
+    }
+
+    db.savePushSubscription({
+      endpoint: subscription.endpoint,
+      keys: subscription.keys,
+      deviceType: deviceType || 'device',
+      userAgent: req.headers['user-agent'] || '',
+      subscribedAt: new Date().toISOString()
+    });
+
+    res.json({
+      success: true,
+      message: 'Device successfully registered for background push notifications.'
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to register push subscription' });
+  }
+});
+
+// 4. Unregister device
+apiRouter.post('/notifications/push-unsubscribe', requireAdmin, (req: Request, res: Response) => {
+  try {
+    const { endpoint } = req.body;
+    if (endpoint) {
+      db.removePushSubscription(endpoint);
+    }
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to remove push subscription' });
+  }
+});
+
+// 5. Trigger live test broadcast across all screens and background devices
+apiRouter.post('/notifications/test-broadcast', requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const testNotif = db.addNotification({
+      type: 'order',
+      title: '🛒 Universal Alert: New Order EG-2026-SYNC',
+      message: 'Chief Adeleke placed an order for iPhone 17 Pro Max (₦2,850,000 via Bank Transfer). Synced on all devices!',
+      link: '/admin?tab=orders'
+    });
+
+    res.json({
+      success: true,
+      message: 'Universal alert broadcasted in real-time across all active screens and background phones/laptops!',
+      notification: testNotif
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to broadcast test notification' });
+  }
 });
 
 // --- REVIEWS ---

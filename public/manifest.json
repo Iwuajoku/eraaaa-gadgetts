@@ -1,0 +1,31 @@
+{
+  "id": "/",
+  "name": "Era Gadgets – Luxury Tech & Phones",
+  "short_name": "Era Gadgets",
+  "description": "Nigeria's premier destination for genuine luxury iPhones, MacBooks, Samsung devices, and certified tech gadgets.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

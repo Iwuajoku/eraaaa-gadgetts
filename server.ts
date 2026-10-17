@@ -1,8 +1,8 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { apiRouter } from './server/api';
-import { db } from './server/db';
+import { apiRouter } from './server/api.ts';
+import { db } from './server/db.ts';
 
 const isProduction = process.env.NODE_ENV === 'production';
 const PORT = 3000;
@@ -10,8 +10,77 @@ const PORT = 3000;
 async function startServer() {
   const app = express();
 
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+  // CORS headers for API and preview environments
+  app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-admin-token');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
+    next();
+  });
+
+  // Static assets (bundled images, media & uploads)
+  const assetsDir = path.resolve(process.cwd(), 'src/assets');
+  const publicDir = path.resolve(process.cwd(), 'public');
+  app.use('/src/assets', express.static(assetsDir));
+  app.use('/assets', express.static(assetsDir));
+  app.use('/public', express.static(publicDir));
+  app.use(express.static(publicDir));
+
+  // Dedicated persistent media route (serves from disk, persistent DB media cache, or showroom fallback)
+  app.get(['/uploads/:filename', '/src/assets/uploads/:filename'], async (req, res, _next) => {
+    const filename = req.params.filename;
+    const possiblePaths = [
+      path.resolve(process.cwd(), 'public/uploads', filename),
+      path.resolve(process.cwd(), 'src/assets/uploads', filename)
+    ];
+    for (const p of possiblePaths) {
+      if (fs.existsSync(p)) {
+        return res.sendFile(p);
+      }
+    }
+
+    const dataUrl = db.getMedia(filename);
+    if (dataUrl && dataUrl.startsWith('data:image/')) {
+      const match = dataUrl.match(/^data:image\/([a-zA-Z0-9\+\-]+);base64,(.+)$/);
+      if (match) {
+        const mime = `image/${match[1] === 'jpg' ? 'jpeg' : match[1]}`;
+        res.setHeader('Content-Type', mime);
+        res.setHeader('Cache-Control', 'public, max-age=31536000');
+        const buffer = Buffer.from(match[2], 'base64');
+        try {
+          const savePath = path.resolve(process.cwd(), 'public/uploads', filename);
+          const saveDir = path.dirname(savePath);
+          if (!fs.existsSync(saveDir)) fs.mkdirSync(saveDir, { recursive: true });
+          fs.writeFileSync(savePath, buffer);
+        } catch (_) {}
+        return res.send(buffer);
+      }
+    }
+
+    // Smart graceful fallback if an un-migrated image name is requested
+    const lower = filename.toLowerCase();
+    let fallbackImage = 'hero_iphone_flagship_1790352890898.jpg';
+    if (lower.includes('mac') || lower.includes('laptop')) {
+      fallbackImage = 'showcase_macbook_pro_1790352903234.jpg';
+    } else if (lower.includes('samsung') || lower.includes('galaxy') || lower.includes('s25')) {
+      fallbackImage = 'category_samsung_galaxy_1790352913709.jpg';
+    } else if (lower.includes('airpod') || lower.includes('accessories') || lower.includes('watch')) {
+      fallbackImage = 'accessories_airpods_gadgets_1790352927938.jpg';
+    }
+
+    const fallbackPath = path.resolve(process.cwd(), 'src/assets/images', fallbackImage);
+    if (fs.existsSync(fallbackPath)) {
+      return res.sendFile(fallbackPath);
+    }
+
+    res.status(404).send('Image not found');
+  });
 
   // API Router
   app.use('/api', apiRouter);
